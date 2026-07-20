@@ -2,13 +2,21 @@ import { getClinicaNasNuvensEnvConfig } from "./config";
 
 /**
  * NOTE: automated docs lookup at https://api.clinicanasnuvens.com.br was
- * blocked (403) while building this client, so the exact token endpoint
- * path, grant flow, and resource paths below are a best-effort scaffold
- * based on the fields shown in the settings panel (client_id, client_secret,
- * and a per-account `clinicaNasNuvens-cid` token/hash sent on every
- * request). Verify each path/header against the real docs before relying
- * on this in production and adjust the constants here — the rest of the
- * integration (model, settings UI, API routes) does not need to change.
+ * blocked (403) while building this client, so most of this was a
+ * best-effort scaffold, refined against the real API's error responses:
+ *
+ * - Token endpoint path (`/oauth/token`) got a 403 in production with a
+ *   Spring Security "Full authentication is required" error when
+ *   client_id/client_secret were sent as body params — that error is
+ *   characteristic of a Spring-based OAuth2 server expecting the
+ *   standard client_secret_basic scheme instead, so this now sends them
+ *   as an HTTP Basic Authorization header. Not yet re-verified against
+ *   production after the switch.
+ * - APPOINTMENTS_PATH, the `from`/`to` query param names, and the
+ *   ClinicaNasNuvensAppointment field names below are still unverified
+ *   guesses — validate/adjust these next using the same
+ *   status+body-in-error-message approach (see describeError in
+ *   src/lib/sync/clinica-nas-nuvens-google-calendar.ts).
  */
 
 const TOKEN_PATH = "/oauth/token";
@@ -70,13 +78,21 @@ export class ClinicaNasNuvensClient {
 
     const { baseUrl, clientId, clientSecret } = getClinicaNasNuvensEnvConfig();
 
+    // The token endpoint rejects client_id/client_secret sent as body
+    // params with a Spring Security "Full authentication is required"
+    // 403 — it expects the standard OAuth2 client_secret_basic scheme
+    // (RFC 6749 §2.3.1): credentials in an HTTP Basic Authorization
+    // header, with only grant_type in the body.
+    const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+
     const response = await fetch(`${baseUrl}${TOKEN_PATH}`, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${basicAuth}`,
+      },
       body: new URLSearchParams({
         grant_type: "client_credentials",
-        client_id: clientId,
-        client_secret: clientSecret,
       }),
     });
 
