@@ -13,10 +13,14 @@ export class ClinicaNasNuvensConfigError extends Error {}
  * into a database dump or be edited through the settings UI.
  */
 export function getClinicaNasNuvensEnvConfig(): ClinicaNasNuvensEnvConfig {
-  const baseUrl =
-    process.env.CLINICA_NAS_NUVENS_BASE_URL ?? "https://api.clinicanasnuvens.com.br";
-  const clientId = process.env.CLINICA_NAS_NUVENS_CLIENT_ID;
-  const clientSecret = process.env.CLINICA_NAS_NUVENS_CLIENT_SECRET;
+  const baseUrl = (
+    process.env.CLINICA_NAS_NUVENS_BASE_URL ?? "https://api.clinicanasnuvens.com.br"
+  ).trim();
+  // .trim() guards against a trailing newline/space sneaking in when the
+  // value is pasted into Vercel's env var UI — invisible in the dashboard,
+  // but enough to make Basic auth fail with "Bad credentials".
+  const clientId = process.env.CLINICA_NAS_NUVENS_CLIENT_ID?.trim();
+  const clientSecret = process.env.CLINICA_NAS_NUVENS_CLIENT_SECRET?.trim();
 
   if (!clientId || !clientSecret) {
     throw new ClinicaNasNuvensConfigError(
