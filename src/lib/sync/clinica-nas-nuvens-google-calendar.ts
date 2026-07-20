@@ -1,4 +1,5 @@
 import {
+  ClinicaNasNuvensApiError,
   ClinicaNasNuvensClient,
   type ClinicaNasNuvensAppointment,
 } from "@/lib/integrations/clinica-nas-nuvens/client";
@@ -19,6 +20,18 @@ export interface SyncResult {
   updated: number;
   skipped: number;
   errors: string[];
+}
+
+/**
+ * Includes the HTTP status + response body for ClinicaNasNuvensApiError so
+ * sync failures are diagnosable from the /api/cron/sync-agenda response
+ * alone, without needing server logs.
+ */
+function describeError(err: unknown): string {
+  if (err instanceof ClinicaNasNuvensApiError) {
+    return `${err.message} (status ${err.status}, body: ${JSON.stringify(err.body)})`;
+  }
+  return err instanceof Error ? err.message : String(err);
 }
 
 function toEventInput(appointment: ClinicaNasNuvensAppointment): GoogleCalendarEventInput {
@@ -67,7 +80,7 @@ export async function syncClinicaNasNuvensAgendaToGoogleCalendar(): Promise<Sync
   try {
     appointments = await cnnClient.listAppointments(isoDate(from), isoDate(to));
   } catch (err) {
-    result.errors.push(`Failed to fetch CNN agenda: ${err instanceof Error ? err.message : String(err)}`);
+    result.errors.push(`Failed to fetch CNN agenda: ${describeError(err)}`);
     return result;
   }
 
@@ -104,9 +117,7 @@ export async function syncClinicaNasNuvensAgendaToGoogleCalendar(): Promise<Sync
         result.created += 1;
       }
     } catch (err) {
-      result.errors.push(
-        `Appointment ${appointment.id}: ${err instanceof Error ? err.message : String(err)}`
-      );
+      result.errors.push(`Appointment ${appointment.id}: ${describeError(err)}`);
     }
   }
 
