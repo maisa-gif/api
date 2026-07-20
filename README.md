@@ -19,6 +19,8 @@ docker run --name api-postgres -e POSTGRES_PASSWORD=password -e POSTGRES_DB=api_
 
 or point it at a free hosted instance (Vercel Postgres, [Neon](https://neon.tech), [Supabase](https://supabase.com)).
 
+On Vercel, `npm install` runs on every deploy, which triggers the `postinstall` script (`prisma generate && prisma migrate deploy`) — so as long as `DATABASE_URL` is set in the project's environment variables, new migrations are applied automatically on deploy with no manual step.
+
 First, run the development server:
 
 ```bash
