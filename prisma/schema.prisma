@@ -20,6 +20,33 @@ model Integration {
   type      String   @unique
   enabled   Boolean  @default(false)
   token     String?
+
+  // OAuth-based integrations (e.g. GOOGLE_CALENDAR) store their tokens here
+  // instead of `token`, which is reserved for static per-account
+  // tokens/hashes like the Clínica nas Nuvens cid.
+  accessToken    String?
+  refreshToken   String?
+  tokenExpiresAt DateTime?
+  // Free-form JSON for integration-specific settings, e.g. the selected
+  // Google Calendar id or the connected account's email.
+  metadata       String?
+  lastSyncAt     DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Tracks the mapping between a Clínica nas Nuvens appointment and the
+// Google Calendar event it was synced to, so re-runs of the sync job
+// update existing events instead of duplicating them.
+model SyncedAppointment {
+  id               String   @id @default(cuid())
+  cnnAppointmentId String   @unique
+  googleEventId    String
+  googleCalendarId String
+  // Raw "updated at" fingerprint from the CNN appointment, used to skip
+  // re-pushing events that haven't changed since the last sync.
+  sourceUpdatedAt  String?
+  syncedAt         DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }

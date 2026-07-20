@@ -13,6 +13,23 @@ import { getClinicaNasNuvensEnvConfig } from "./config";
 
 const TOKEN_PATH = "/oauth/token";
 const CID_HEADER = "clinicaNasNuvens-cid";
+const APPOINTMENTS_PATH = "/agenda";
+
+/**
+ * Best-effort shape for a CNN "agenda" appointment — field names are a
+ * guess (docs lookup was blocked) and should be verified/adjusted against
+ * the real API response before relying on this in production.
+ */
+export interface ClinicaNasNuvensAppointment {
+  id: string;
+  patientName: string;
+  startAt: string;
+  endAt: string;
+  location?: string;
+  notes?: string;
+  status: string;
+  updatedAt: string;
+}
 
 interface AccessToken {
   value: string;
@@ -105,6 +122,19 @@ export class ClinicaNasNuvensClient {
     }
 
     return (await response.json()) as T;
+  }
+
+  /**
+   * Lists agenda appointments in the given window. `from`/`to` are ISO
+   * date strings (YYYY-MM-DD); exact query param names are a best-effort
+   * guess — see the class-level note.
+   */
+  async listAppointments(from: string, to: string): Promise<ClinicaNasNuvensAppointment[]> {
+    const params = new URLSearchParams({ from, to });
+    const data = await this.request<{ appointments: ClinicaNasNuvensAppointment[] }>(
+      `${APPOINTMENTS_PATH}?${params.toString()}`
+    );
+    return data.appointments;
   }
 
   /** Sanity-checks the credentials + cid by making a lightweight call. */

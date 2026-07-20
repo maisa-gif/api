@@ -45,6 +45,29 @@ Currently implemented: **Clínica nas Nuvens** (`CLINICA_NAS_NUVENS`) — see `.
 
 To add a new integration: add its key to `types.ts`, an entry in `registry.ts`, a `config.ts`/`client.ts` pair, and a migration if it needs extra fields beyond `enabled`/`token`.
 
+### Google Agenda sync
+
+The Clínica nas Nuvens agenda is synced one-way (CNN → Google) into a connected Google Calendar:
+
+- `src/lib/integrations/google-calendar/` — OAuth flow (`oauth.ts`), token persistence (`connection.ts`, reusing the same `Integration` table but with `accessToken`/`refreshToken`/`tokenExpiresAt` instead of the static `token` field), and the Calendar API client (`client.ts`). This integration doesn't go through the generic `registry.ts`/`IntegrationCard` pattern — it needs a consent redirect, not a static credential form — so it has its own routes and its own card (`GoogleCalendarCard.tsx`).
+- `src/app/api/integrations/google-calendar/connect` — redirects to Google's OAuth consent screen.
+- `src/app/api/integrations/google-calendar/callback` — exchanges the code for tokens and stores them.
+- `src/app/api/integrations/google-calendar/disconnect` — clears the stored tokens.
+- `src/lib/sync/clinica-nas-nuvens-google-calendar.ts` — fetches upcoming CNN appointments and creates/updates matching Google Calendar events, tracked via the `SyncedAppointment` table so re-runs update instead of duplicating. Does not yet delete Google events for appointments cancelled in CNN (see the note in that file).
+- `src/app/api/cron/sync-agenda` — runs the sync above. Protected by a shared `CRON_SECRET` (checked as `Authorization: Bearer $CRON_SECRET`). `vercel.json` schedules it every 15 minutes via Vercel Cron — note the actual run frequency may be capped by your Vercel plan, and any other scheduler (e.g. a self-hosted cron) must send the same header.
+
+#### Setting up Google OAuth credentials
+
+You need a Google Cloud OAuth client to connect a Google Calendar account:
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create (or pick) a project.
+2. **APIs & Services → Library**: enable the **Google Calendar API**.
+3. **APIs & Services → OAuth consent screen**: configure it (External or Internal depending on your Google Workspace setup) and add your account as a test user if the app stays in "Testing" mode.
+4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**, type **Web application**.
+5. Add an **Authorized redirect URI**: `{APP_URL}/api/integrations/google-calendar/callback` (e.g. `http://localhost:3000/api/integrations/google-calendar/callback` for local dev, or your production URL).
+6. Copy the generated **Client ID** and **Client secret** into `.env` as `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, set `APP_URL` to match the redirect URI's origin, and set `CRON_SECRET` to any random string (and configure it as an env var on Vercel so Vercel Cron picks it up automatically).
+7. Open `/settings/integrations` and click **Conectar com Google**.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
