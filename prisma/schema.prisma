@@ -9,12 +9,14 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
-// SQLite has no native enum type, so `type` is a string constrained at the
+// `type` is a plain string (not a Prisma enum) constrained at the
 // application layer to the keys of the integration registry
-// (see src/lib/integrations/registry.ts).
+// (see src/lib/integrations/registry.ts), since it also holds
+// OAuth-only integrations like GOOGLE_CALENDAR that aren't in that
+// registry.
 model Integration {
   id        String   @id @default(cuid())
   type      String   @unique

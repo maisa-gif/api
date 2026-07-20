@@ -4,12 +4,20 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-Copy `.env.example` to `.env` and fill in any integration credentials you need, then apply the database schema:
+Copy `.env.example` to `.env`, point `DATABASE_URL` at a Postgres database (a local one is fine for development — see below), fill in any integration credentials you need, then apply the database schema:
 
 ```bash
 cp .env.example .env
 npx prisma migrate dev
 ```
+
+Needs a Postgres instance reachable at `DATABASE_URL`. For local development, either run one with Docker:
+
+```bash
+docker run --name api-postgres -e POSTGRES_PASSWORD=password -e POSTGRES_DB=api_dev -p 5432:5432 -d postgres:16
+```
+
+or point it at a free hosted instance (Vercel Postgres, [Neon](https://neon.tech), [Supabase](https://supabase.com)).
 
 First, run the development server:
 
