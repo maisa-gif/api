@@ -39,8 +39,14 @@ export async function GET(request: Request) {
   const cnnClient = new ClinicaNasNuvensClient(cnnStatus.token);
   const driveClient = new GoogleDriveClient();
 
+  // NULL errorMessage (the original 4 pre-this-feature rows) must be
+  // matched explicitly — `NOT: { contains: X }` alone silently excludes
+  // NULL fields in SQL (NULL LIKE '%X%' is NULL, not true/false).
   const rows = await prisma.syncedTranscript.findMany({
-    where: { status: "synced", NOT: { errorMessage: { contains: "CNN observações updated" } } },
+    where: {
+      status: "synced",
+      OR: [{ errorMessage: null }, { NOT: { errorMessage: { contains: "CNN observações updated" } } }],
+    },
   });
 
   const results: Array<{ file: string; outcome: string }> = [];
