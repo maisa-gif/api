@@ -1,32 +1,42 @@
 import { NextResponse } from "next/server";
 import { getClinicaNasNuvensEnvConfig } from "@/lib/integrations/clinica-nas-nuvens/config";
+import { getIntegrationStatus } from "@/lib/integrations/service";
 
 /**
- * TEMPORARY diagnostic route — delete once the real CNN token endpoint
- * path is confirmed and hardcoded back in
- * src/lib/integrations/clinica-nas-nuvens/client.ts. `/oauth/token`
- * 404'd in production even with valid Basic-auth credentials, so this
- * tries a curated list of common Spring/OAuth2 token endpoint paths
- * using those same (already-configured) credentials and reports how
- * each one responded.
+ * TEMPORARY diagnostic route — delete once the real CNN agenda endpoint
+ * (path + auth flow) is confirmed and hardcoded back into
+ * src/lib/integrations/clinica-nas-nuvens/client.ts.
+ *
+ * Round 1 (token-exchange hypothesis, since removed): tried ~15 common
+ * OAuth2 token endpoint paths — all 404'd "Not Found", even though the
+ * same Basic-auth credentials are accepted (no more "Bad credentials")
+ * once a real path is hit. Combined with the API returning a generic
+ * Spring Security "Full authentication is required" 403 for basically
+ * any unauthenticated request, that suggests there may be no separate
+ * token-exchange step at all.
+ *
+ * Round 2 (this version): tests the simpler hypothesis that resource
+ * endpoints accept HTTP Basic auth directly — client_id:client_secret
+ * as Basic credentials, plus the clinicaNasNuvens-cid header carrying
+ * the per-account token — with no token exchange beforehand.
  */
-const CANDIDATE_PATHS = [
-  "/oauth/token",
-  "/api/oauth/token",
-  "/oauth2/token",
-  "/api/oauth2/token",
-  "/auth/token",
-  "/api/auth/token",
-  "/api/v1/oauth/token",
-  "/v1/oauth/token",
-  "/login",
-  "/api/login",
-  "/token",
-  "/api/token",
-  "/authenticate",
-  "/api/authenticate",
-  "/api/v1/auth/token",
+const CANDIDATE_RESOURCE_PATHS = [
+  "/agenda",
+  "/api/agenda",
+  "/agendamentos",
+  "/api/agendamentos",
+  "/consultas",
+  "/api/consultas",
+  "/api/v1/agenda",
+  "/v1/agenda",
+  "/schedule",
+  "/api/schedule",
+  "/appointments",
+  "/api/appointments",
+  "/api/v1/agendamentos",
 ];
+
+const CID_HEADER = "clinicaNasNuvens-cid";
 
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
@@ -42,16 +52,18 @@ export async function GET(request: Request) {
   const { baseUrl, clientId, clientSecret } = getClinicaNasNuvensEnvConfig();
   const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 
+  const cnnStatus = await getIntegrationStatus("CLINICA_NAS_NUVENS");
+  const cid = cnnStatus.token ?? "";
+
   const results = await Promise.all(
-    CANDIDATE_PATHS.map(async (path) => {
+    CANDIDATE_RESOURCE_PATHS.map(async (path) => {
       try {
         const response = await fetch(`${baseUrl}${path}`, {
-          method: "POST",
+          method: "GET",
           headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
             Authorization: `Basic ${basicAuth}`,
+            [CID_HEADER]: cid,
           },
-          body: new URLSearchParams({ grant_type: "client_credentials" }),
         });
         const bodyText = await response.text();
         return { path, status: response.status, body: bodyText.slice(0, 500) };
@@ -61,5 +73,5 @@ export async function GET(request: Request) {
     })
   );
 
-  return NextResponse.json({ baseUrl, results });
+  return NextResponse.json({ baseUrl, cidConfigured: Boolean(cid), results });
 }
