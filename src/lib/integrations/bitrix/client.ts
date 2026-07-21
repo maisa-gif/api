@@ -17,16 +17,19 @@ export class BitrixApiError extends Error {
   }
 }
 
+function normalizeName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // strip accents (combining diacritical marks)
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
 /**
  * Client for Bitrix24's REST API via an inbound webhook (no OAuth —
  * simplest setup for a single-portal integration like this one). See
  * config.ts for how BITRIX_WEBHOOK_URL is obtained.
- *
- * NOTE: contact name matching (findContactByName) is unverified against
- * real Bitrix24 data — Bitrix splits a person's name across NAME/
- * LAST_NAME/SECOND_NAME fields, and how CNN patient names map onto that
- * split isn't confirmed yet. Adjust the filter strategy once tested
- * against a real portal.
  */
 export class BitrixClient {
   private async call<T>(method: string, params: Record<string, unknown>): Promise<T> {
@@ -55,14 +58,33 @@ export class BitrixClient {
   }
 
   /**
-   * Finds contacts whose first name contains `name` (case-insensitive
-   * substring match via Bitrix's "%FIELD" filter operator). Returns
-   * every match — callers should decide how to handle 0 or >1 results.
+   * Finds contacts matching a full name (e.g. "Victor Cirne Carvalho").
+   * Bitrix stores a person's name split across NAME (first)/SECOND_NAME
+   * (middle)/LAST_NAME fields, so searching the full string against just
+   * NAME never matches — this queries by first name only (Bitrix's
+   * "%NAME" substring filter, to keep the candidate set small), then
+   * filters client-side to contacts whose combined NAME+SECOND_NAME+
+   * LAST_NAME contains both the first and last word of the search name
+   * (accent/case-insensitive). Middle-name mismatches are tolerated since
+   * CNN and Bitrix may not record them the same way.
    */
-  async findContactsByName(name: string): Promise<BitrixContact[]> {
-    return this.call<BitrixContact[]>("crm.contact.list", {
-      filter: { "%NAME": name },
+  async findContactsByName(fullName: string): Promise<BitrixContact[]> {
+    const targetWords = normalizeName(fullName).split(" ").filter(Boolean);
+    if (targetWords.length === 0) return [];
+
+    const candidates = await this.call<BitrixContact[]>("crm.contact.list", {
+      filter: { "%NAME": targetWords[0] },
       select: ["ID", "NAME", "LAST_NAME", "SECOND_NAME"],
+    });
+
+    const firstWord = targetWords[0];
+    const lastWord = targetWords[targetWords.length - 1];
+
+    return candidates.filter((contact) => {
+      const combined = normalizeName(
+        [contact.NAME, contact.SECOND_NAME, contact.LAST_NAME].filter(Boolean).join(" ")
+      );
+      return combined.includes(firstWord) && combined.includes(lastWord);
     });
   }
 
