@@ -16,7 +16,6 @@ import { getClinicaNasNuvensEnvConfig } from "./config";
 
 const CID_HEADER = "clinicaNasNuvens-cid";
 const AGENDA_LISTA_PATH = "/agenda/lista";
-const AGENDA_PATH = (id: number) => `/agenda/${id}`;
 const AGENDA_RESUMIDA_PATH = (id: number) => `/agenda/${id}/resumida`;
 // Server-observed max in testing; loop pages beyond this if totalPaginas > 1.
 const PAGE_SIZE = 200;
@@ -146,102 +145,9 @@ export class ClinicaNasNuvensClient {
     return all;
   }
 
-  /** Fetches a single appointment by ID — same shape as a listAppointments() item. */
-  async getAppointment(id: number): Promise<ClinicaNasNuvensAppointment> {
-    return this.request<ClinicaNasNuvensAppointment>(AGENDA_PATH(id));
-  }
-
   /** Fetches the patient name + a condensed status for a single appointment. */
   async getAppointmentSummary(id: number): Promise<ClinicaNasNuvensAppointmentSummary> {
     return this.request<ClinicaNasNuvensAppointmentSummary>(AGENDA_RESUMIDA_PATH(id));
-  }
-
-  /**
-   * PUT /agenda/{id} expects a different write DTO (AgendaAlteracaoFormAPI)
-   * than GET returns (AgendaFormRetornoAPI) — confirmed via real 400s
-   * ("Unrecognized field ...") each listing the write DTO's 22 known
-   * properties (Jackson stops at the first offending field, so this was
-   * discovered one field at a time: "id", then "idTipoConvenio", ...).
-   * This is that full allowlist — only fields on it are ever sent, rather
-   * than guessing which of the read response's extra fields to strip.
-   */
-  private static readonly AGENDA_WRITE_FIELDS = new Set([
-    "notificarSMSProfissional",
-    "idTipoConsulta",
-    "data",
-    "idPaciente",
-    "emailPaciente",
-    "idPacienteConvenio",
-    "status",
-    "horaFim",
-    "idPessoaExecutor",
-    "procedimentos",
-    "telefoneCelularPaciente",
-    "horaInicio",
-    "idLocalAgenda",
-    "notificarWhatsappPaciente",
-    "notificarEmailProfissional",
-    "encaminhamento",
-    "notificarSMSPaciente",
-    "observacoes",
-    "idOrigemPaciente",
-    "idRotulo",
-    "notificarEmailPaciente",
-    "salaEspera",
-  ]);
-
-  /**
-   * Nested write DTO for each `procedimentos` item
-   * (AgendaProcedimentoAlteracaoFormAPI) — also confirmed via a real 400
-   * ("Unrecognized field \"nome\"..."), also stricter than what GET
-   * returns (which additionally has `nome`, the procedure's display
-   * name).
-   */
-  private static readonly AGENDA_PROCEDIMENTO_WRITE_FIELDS = new Set([
-    "idEspecialidade",
-    "id",
-    "idTipoProcedimento",
-    "idPromocao",
-    "quantidade",
-  ]);
-
-  /**
-   * Appends a line to an appointment's `observacoes` (no-op if already
-   * present, so retries don't duplicate it) — used to link the Gemini
-   * transcript from the appointment record, since the CNN API has no
-   * document/attachment endpoint for a patient's prontuário. Does a
-   * read-modify-write: GET the appointment, keep only the fields
-   * AGENDA_WRITE_FIELDS accepts, change observacoes, PUT it back.
-   */
-  async appendAppointmentNote(id: number, note: string): Promise<void> {
-    const current = (await this.getAppointment(id)) as unknown as Record<string, unknown>;
-    const existingNotes = typeof current.observacoes === "string" ? current.observacoes : null;
-    if (existingNotes?.includes(note)) return;
-
-    const body: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(current)) {
-      if (ClinicaNasNuvensClient.AGENDA_WRITE_FIELDS.has(key)) {
-        body[key] = value;
-      }
-    }
-    body.observacoes = existingNotes ? `${existingNotes}\n${note}` : note;
-
-    if (Array.isArray(body.procedimentos)) {
-      body.procedimentos = body.procedimentos.map((p: Record<string, unknown>) => {
-        const filtered: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(p)) {
-          if (ClinicaNasNuvensClient.AGENDA_PROCEDIMENTO_WRITE_FIELDS.has(key)) {
-            filtered[key] = value;
-          }
-        }
-        return filtered;
-      });
-    }
-
-    await this.request<unknown>(AGENDA_PATH(id), {
-      method: "PUT",
-      body: JSON.stringify(body),
-    });
   }
 
   /** Sanity-checks the credentials + cid by making a lightweight call. */
