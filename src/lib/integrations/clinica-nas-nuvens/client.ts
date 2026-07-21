@@ -16,6 +16,7 @@ import { getClinicaNasNuvensEnvConfig } from "./config";
 
 const CID_HEADER = "clinicaNasNuvens-cid";
 const AGENDA_LISTA_PATH = "/agenda/lista";
+const AGENDA_PATH = (id: number) => `/agenda/${id}`;
 const AGENDA_RESUMIDA_PATH = (id: number) => `/agenda/${id}/resumida`;
 // Server-observed max in testing; loop pages beyond this if totalPaginas > 1.
 const PAGE_SIZE = 200;
@@ -92,6 +93,7 @@ export class ClinicaNasNuvensClient {
     const response = await fetch(`${baseUrl}${path}`, {
       ...init,
       headers: {
+        "Content-Type": "application/json",
         ...init.headers,
         Authorization: `Basic ${basicAuth}`,
         [CID_HEADER]: this.cid,
@@ -144,9 +146,38 @@ export class ClinicaNasNuvensClient {
     return all;
   }
 
+  /** Fetches a single appointment by ID — same shape as a listAppointments() item. */
+  async getAppointment(id: number): Promise<ClinicaNasNuvensAppointment> {
+    return this.request<ClinicaNasNuvensAppointment>(AGENDA_PATH(id));
+  }
+
   /** Fetches the patient name + a condensed status for a single appointment. */
   async getAppointmentSummary(id: number): Promise<ClinicaNasNuvensAppointmentSummary> {
     return this.request<ClinicaNasNuvensAppointmentSummary>(AGENDA_RESUMIDA_PATH(id));
+  }
+
+  /**
+   * Appends a line to an appointment's `observacoes` (no-op if already
+   * present, so retries don't duplicate it) — used to link the Gemini
+   * transcript from the appointment record, since the CNN API has no
+   * document/attachment endpoint for a patient's prontuário.
+   *
+   * UNVERIFIED: PUT /agenda/{id}'s accepted request body isn't confirmed
+   * against real docs — this does a read-modify-write (GET the full
+   * appointment, change only observacoes, PUT the whole object back),
+   * which is the safest guess without a confirmed write schema. Adjust
+   * if the real API rejects it.
+   */
+  async appendAppointmentNote(id: number, note: string): Promise<void> {
+    const current = await this.getAppointment(id);
+    if (current.observacoes?.includes(note)) return;
+
+    const observacoes = current.observacoes ? `${current.observacoes}\n${note}` : note;
+
+    await this.request<unknown>(AGENDA_PATH(id), {
+      method: "PUT",
+      body: JSON.stringify({ ...current, observacoes }),
+    });
   }
 
   /** Sanity-checks the credentials + cid by making a lightweight call. */

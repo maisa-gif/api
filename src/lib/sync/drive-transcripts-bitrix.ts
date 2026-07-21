@@ -68,11 +68,11 @@ export function parseGeminiFileName(fileName: string): { eventName: string; date
  * ambiguity). Returns null if no CNN appointment matches, so the caller
  * can fall back to name-based matching.
  */
-async function findPatientPhone(
+export async function findPatientPhone(
   cnnClient: ClinicaNasNuvensClient,
   patientName: string,
   date: string
-): Promise<{ phone: string | null; note: string }> {
+): Promise<{ phone: string | null; appointmentId: number | null; note: string }> {
   const appointments = await cnnClient.listAppointments(date, date, EXECUTOR_ID);
   const target = normalizeName(patientName);
   const namesSeen: string[] = [];
@@ -83,6 +83,7 @@ async function findPatientPhone(
     if (normalizeName(summary.nomePaciente) === target) {
       return {
         phone: appointment.telefoneCelularPaciente,
+        appointmentId: appointment.id,
         note: appointment.telefoneCelularPaciente
           ? `CNN appointment found, phone=${appointment.telefoneCelularPaciente}`
           : "CNN appointment found but has no phone on file",
@@ -92,6 +93,7 @@ async function findPatientPhone(
 
   return {
     phone: null,
+    appointmentId: null,
     note: `No CNN appointment matched '${patientName}' on ${date} (saw: ${namesSeen.join(", ") || "none"})`,
   };
 }
@@ -101,17 +103,22 @@ async function findMatchingContacts(
   cnnClient: ClinicaNasNuvensClient | null,
   eventName: string,
   date: string | null
-): Promise<{ contacts: BitrixContact[]; matchedBy: "phone" | "name"; note: string }> {
+): Promise<{
+  contacts: BitrixContact[];
+  matchedBy: "phone" | "name";
+  cnnAppointmentId: number | null;
+  note: string;
+}> {
   const notes: string[] = [];
 
   if (cnnClient && date) {
     try {
-      const { phone, note } = await findPatientPhone(cnnClient, eventName, date);
+      const { phone, appointmentId, note } = await findPatientPhone(cnnClient, eventName, date);
       notes.push(note);
       if (phone) {
         const byPhone = await bitrixClient.findContactsByPhone(phone);
         if (byPhone.length > 0) {
-          return { contacts: byPhone, matchedBy: "phone", note: notes.join("; ") };
+          return { contacts: byPhone, matchedBy: "phone", cnnAppointmentId: appointmentId, note: notes.join("; ") };
         }
         notes.push(`No Bitrix contact found for phone ${phone}`);
       }
@@ -124,7 +131,7 @@ async function findMatchingContacts(
 
   const byName = await bitrixClient.findContactsByName(eventName);
   notes.push(byName.length > 0 ? "Matched by name" : "No Bitrix contact found by name either");
-  return { contacts: byName, matchedBy: "name", note: notes.join("; ") };
+  return { contacts: byName, matchedBy: "name", cnnAppointmentId: null, note: notes.join("; ") };
 }
 
 /**
@@ -182,9 +189,14 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
       }
 
       const { eventName, date } = parseGeminiFileName(file.name);
-      const { contacts, matchedBy, note } = eventName
+      const { contacts, matchedBy, cnnAppointmentId, note } = eventName
         ? await findMatchingContacts(bitrixClient, cnnClient, eventName, date)
-        : { contacts: [] as BitrixContact[], matchedBy: "name" as const, note: "File name has no parseable event name" };
+        : {
+            contacts: [] as BitrixContact[],
+            matchedBy: "name" as const,
+            cnnAppointmentId: null as number | null,
+            note: "File name has no parseable event name",
+          };
 
       if (contacts.length === 0) {
         result.noMatch += 1;
@@ -235,6 +247,21 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
         { name: attachmentName, bytes }
       );
 
+      // Link the transcript on the CNN appointment's observações too,
+      // since the CNN API has no document/attachment endpoint for the
+      // prontuário itself. Best-effort — a failure here doesn't undo the
+      // Bitrix attachment, just gets noted.
+      let cnnNoteResult: string | null = null;
+      if (cnnClient && cnnAppointmentId) {
+        try {
+          const link = file.webViewLink ?? `Drive file: ${file.name}`;
+          await cnnClient.appendAppointmentNote(cnnAppointmentId, `Transcrição da consulta (Gemini): ${link}`);
+          cnnNoteResult = "CNN observações updated";
+        } catch (err) {
+          cnnNoteResult = `Failed to update CNN observações: ${describeError(err)}`;
+        }
+      }
+
       await prisma.syncedTranscript.upsert({
         where: { driveFileId: file.id },
         create: {
@@ -243,12 +270,13 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
           matchedName: eventName,
           bitrixContactId: contact.ID,
           status: "synced",
+          errorMessage: cnnNoteResult,
         },
         update: {
           matchedName: eventName,
           bitrixContactId: contact.ID,
           status: "synced",
-          errorMessage: null,
+          errorMessage: cnnNoteResult,
           syncedAt: new Date(),
         },
       });

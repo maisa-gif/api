@@ -54,6 +54,23 @@ export class GoogleDriveClient {
     return data.files;
   }
 
+  /** Fetches metadata for a single file by ID. */
+  async getFile(fileId: string): Promise<DriveFile> {
+    const headers = await this.authHeader();
+    const params = new URLSearchParams({ fields: "id,name,mimeType,createdTime,webViewLink" });
+
+    const response = await fetch(`${API_BASE}/files/${fileId}?${params.toString()}`, { headers });
+    if (!response.ok) {
+      throw new GoogleDriveApiError(
+        `Failed to get Drive file ${fileId}`,
+        response.status,
+        await safeReadBody(response)
+      );
+    }
+
+    return (await response.json()) as DriveFile;
+  }
+
   /**
    * Downloads a file's bytes — exports to PDF if it's a native Google Doc
    * (Gemini notes are usually a Doc), otherwise downloads it directly.
