@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ClinicaNasNuvensClient } from "@/lib/integrations/clinica-nas-nuvens/client";
-import { GoogleDriveClient } from "@/lib/integrations/google-drive/client";
+import { ClinicaNasNuvensApiError, ClinicaNasNuvensClient } from "@/lib/integrations/clinica-nas-nuvens/client";
+import { GoogleDriveApiError, GoogleDriveClient } from "@/lib/integrations/google-drive/client";
 import { getIntegrationStatus } from "@/lib/integrations/service";
 import { findPatientPhone, parseGeminiFileName } from "@/lib/sync/drive-transcripts-bitrix";
+
+function describeError(err: unknown): string {
+  if (err instanceof ClinicaNasNuvensApiError || err instanceof GoogleDriveApiError) {
+    return `${err.message} (status ${err.status}, body: ${JSON.stringify(err.body)})`;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
 
 /**
  * TEMPORARY one-off backfill route — delete after running once.
@@ -75,10 +82,7 @@ export async function GET(request: Request) {
       });
       results.push({ file: row.driveFileName, outcome: `Updated appointment ${appointmentId}` });
     } catch (err) {
-      results.push({
-        file: row.driveFileName,
-        outcome: `Error: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      results.push({ file: row.driveFileName, outcome: `Error: ${describeError(err)}` });
     }
   }
 
