@@ -1,42 +1,32 @@
 import { NextResponse } from "next/server";
 import { getClinicaNasNuvensEnvConfig } from "@/lib/integrations/clinica-nas-nuvens/config";
-import { getIntegrationStatus } from "@/lib/integrations/service";
 
 /**
- * TEMPORARY diagnostic route — delete once the real CNN agenda endpoint
- * (path + auth flow) is confirmed and hardcoded back into
+ * TEMPORARY diagnostic route — delete once the real CNN API surface is
+ * confirmed and hardcoded back into
  * src/lib/integrations/clinica-nas-nuvens/client.ts.
  *
- * Round 1 (token-exchange hypothesis, since removed): tried ~15 common
- * OAuth2 token endpoint paths — all 404'd "Not Found", even though the
- * same Basic-auth credentials are accepted (no more "Bad credentials")
- * once a real path is hit. Combined with the API returning a generic
- * Spring Security "Full authentication is required" 403 for basically
- * any unauthenticated request, that suggests there may be no separate
- * token-exchange step at all.
+ * Round 1: ~15 common OAuth2 token endpoint path guesses — all 404.
+ * Round 2: ~13 common agenda/appointments resource path guesses with
+ * direct Basic auth — all 404.
  *
- * Round 2 (this version): tests the simpler hypothesis that resource
- * endpoints accept HTTP Basic auth directly — client_id:client_secret
- * as Basic credentials, plus the clinicaNasNuvens-cid header carrying
- * the per-account token — with no token exchange beforehand.
+ * Round 3 (this version): instead of guessing more individual paths,
+ * check whether the API exposes a Spring Boot OpenAPI/Swagger spec
+ * (springdoc or springfox), which would list every real route/method
+ * authoritatively in one response instead of more blind guesses.
  */
-const CANDIDATE_RESOURCE_PATHS = [
-  "/agenda",
-  "/api/agenda",
-  "/agendamentos",
-  "/api/agendamentos",
-  "/consultas",
-  "/api/consultas",
-  "/api/v1/agenda",
-  "/v1/agenda",
-  "/schedule",
-  "/api/schedule",
-  "/appointments",
-  "/api/appointments",
-  "/api/v1/agendamentos",
+const CANDIDATE_SPEC_PATHS = [
+  "/v3/api-docs",
+  "/v3/api-docs.yaml",
+  "/api-docs",
+  "/v2/api-docs",
+  "/swagger.json",
+  "/swagger.yaml",
+  "/openapi.json",
+  "/openapi.yaml",
+  "/swagger-ui/index.html",
+  "/swagger-ui.html",
 ];
-
-const CID_HEADER = "clinicaNasNuvens-cid";
 
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
@@ -52,26 +42,27 @@ export async function GET(request: Request) {
   const { baseUrl, clientId, clientSecret } = getClinicaNasNuvensEnvConfig();
   const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 
-  const cnnStatus = await getIntegrationStatus("CLINICA_NAS_NUVENS");
-  const cid = cnnStatus.token ?? "";
-
   const results = await Promise.all(
-    CANDIDATE_RESOURCE_PATHS.map(async (path) => {
-      try {
-        const response = await fetch(`${baseUrl}${path}`, {
-          method: "GET",
-          headers: {
-            Authorization: `Basic ${basicAuth}`,
-            [CID_HEADER]: cid,
-          },
-        });
-        const bodyText = await response.text();
-        return { path, status: response.status, body: bodyText.slice(0, 500) };
-      } catch (err) {
-        return { path, status: null, body: err instanceof Error ? err.message : String(err) };
-      }
+    CANDIDATE_SPEC_PATHS.map(async (path) => {
+      // Try both unauthenticated and with Basic auth — spec endpoints are
+      // often (but not always) left public.
+      const attempts = await Promise.all(
+        [
+          { label: "no-auth", headers: {} as Record<string, string> },
+          { label: "basic-auth", headers: { Authorization: `Basic ${basicAuth}` } },
+        ].map(async ({ label, headers }) => {
+          try {
+            const response = await fetch(`${baseUrl}${path}`, { method: "GET", headers });
+            const bodyText = await response.text();
+            return { label, status: response.status, bodyPreview: bodyText.slice(0, 300) };
+          } catch (err) {
+            return { label, status: null, bodyPreview: err instanceof Error ? err.message : String(err) };
+          }
+        })
+      );
+      return { path, attempts };
     })
   );
 
-  return NextResponse.json({ baseUrl, cidConfigured: Boolean(cid), results });
+  return NextResponse.json({ baseUrl, results });
 }
