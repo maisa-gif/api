@@ -16,6 +16,7 @@ import { getClinicaNasNuvensEnvConfig } from "./config";
 
 const CID_HEADER = "clinicaNasNuvens-cid";
 const AGENDA_LISTA_PATH = "/agenda/lista";
+const AGENDA_PATH = (id: number) => `/agenda/${id}`;
 const AGENDA_RESUMIDA_PATH = (id: number) => `/agenda/${id}/resumida`;
 // Server-observed max in testing; loop pages beyond this if totalPaginas > 1.
 const PAGE_SIZE = 200;
@@ -142,6 +143,11 @@ export class ClinicaNasNuvensClient {
     } while (pagina < totalPaginas);
 
     return all;
+  }
+
+  /** Fetches a single appointment by ID — same shape as a listAppointments() item. */
+  async getAppointment(id: number): Promise<ClinicaNasNuvensAppointment> {
+    return this.request<ClinicaNasNuvensAppointment>(AGENDA_PATH(id));
   }
 
   /** Fetches the patient name + a condensed status for a single appointment. */
