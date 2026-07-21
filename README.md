@@ -78,6 +78,21 @@ You need a Google Cloud OAuth client to connect a Google Calendar account:
 6. Copy the generated **Client ID** and **Client secret** into `.env` as `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, set `APP_URL` to match the redirect URI's origin, and set `CRON_SECRET` to any random string (and configure it as an env var on Vercel so Vercel Cron picks it up automatically).
 7. Open `/settings/integrations` and click **Conectar com Google**.
 
+### Meeting transcripts sync (Drive → Bitrix24)
+
+When "Take notes with Gemini" is used on a Google Meet call, Google Drive gets a Doc named after the meeting title (== the patient's name, since the synced Calendar event is titled that way) with a timestamp and "Anotações do Gemini" in the name. This pushes each new one onto the matching patient's Bitrix24 CRM timeline:
+
+- `src/lib/integrations/google-drive/client.ts` — lists files matching the Gemini-notes naming pattern and downloads them (exporting Google Docs to PDF). Reuses the same Google OAuth connection as Calendar — the OAuth scope list in `google-calendar/oauth.ts` now also requests `drive.readonly` (broad, since these files are created by Meet, not by this app, so the narrower `drive.file` scope wouldn't see them). **Reconnect Google** (disconnect + "Conectar com Google" again) after this scope was added, or the Drive calls will fail with an insufficient-scope error.
+- `src/lib/integrations/bitrix/` — Bitrix24 REST client via an inbound webhook (`BITRIX_WEBHOOK_URL`), no OAuth. `findContactsByName()`'s matching strategy (Bitrix's `%NAME` substring filter) is **unverified against a real Bitrix24 portal** — adjust once tested, the same way the CNN client was refined against real API responses.
+- `src/lib/sync/drive-transcripts-bitrix.ts` — the sync: extracts the patient name from the Drive file name (`extractEventNameFromFileName`, also unverified against a real Drive file name — only tested against a sanitized downloaded copy), looks up a Bitrix contact by that name, and attaches the file to its CRM timeline via `crm.timeline.comment.add`. Tracked via the `SyncedTranscript` table (one row per Drive file, whatever the outcome — `synced`, `no_match`, `ambiguous`, or `error`) so files aren't reprocessed. Doesn't yet handle 0 or 2+ contact matches beyond recording the outcome — those need manual follow-up for now.
+- `src/app/api/cron/sync-transcripts` — runs the sync above, same `CRON_SECRET` protection, scheduled daily via `vercel.json` (offset 30 minutes after the agenda sync).
+
+#### Setting up the Bitrix24 webhook
+
+1. In Bitrix24, go to **Applications → Webhooks → Inbound webhook** (or search "Webhooks" in the admin panel).
+2. Grant at least the **crm** permission scope.
+3. Copy the generated URL (looks like `https://yourcompany.bitrix24.com.br/rest/1/xxxxxxxxxxxxxxxx/`) into `.env`/Vercel as `BITRIX_WEBHOOK_URL`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

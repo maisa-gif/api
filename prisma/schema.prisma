@@ -52,3 +52,19 @@ model SyncedAppointment {
   syncedAt         DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }
+
+// Tracks which Google Meet "Gemini notes" files (from Drive) have already
+// been pushed to a Bitrix24 contact, so re-runs don't re-attach the same
+// file. One row per Drive file, regardless of match outcome.
+model SyncedTranscript {
+  id              String   @id @default(cuid())
+  driveFileId     String   @unique
+  driveFileName   String
+  // Patient/event name extracted from the file name, used to look up the
+  // Bitrix contact.
+  matchedName     String?
+  bitrixContactId String?
+  status          String
+  errorMessage    String?
+  syncedAt        DateTime @default(now())
+}

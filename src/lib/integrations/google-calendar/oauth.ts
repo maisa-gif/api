@@ -5,6 +5,11 @@ const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
+  // Read-only access to the whole Drive is required (not the narrower
+  // drive.file scope) because the Gemini meeting-notes files are created
+  // by Google Meet, not by this app, so they're outside drive.file's
+  // "files the app created or the user picked" boundary.
+  "https://www.googleapis.com/auth/drive.readonly",
   "openid",
   "https://www.googleapis.com/auth/userinfo.email",
 ];
