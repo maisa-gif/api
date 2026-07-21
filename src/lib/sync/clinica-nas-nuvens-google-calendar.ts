@@ -34,13 +34,43 @@ function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function toEventInput(appointment: ClinicaNasNuvensAppointment): GoogleCalendarEventInput {
+/**
+ * The CNN API doesn't expose an "updated at" timestamp on appointments, so
+ * this fingerprints the fields that matter for the Google event and is
+ * compared against the last synced fingerprint to decide whether to skip
+ * or push an update.
+ */
+function fingerprint(appointment: ClinicaNasNuvensAppointment): string {
+  return JSON.stringify({
+    status: appointment.status,
+    data: appointment.data,
+    horaInicio: appointment.horaInicio,
+    horaFim: appointment.horaFim,
+    observacoes: appointment.observacoes,
+    procedimentos: appointment.procedimentos.map((p) => p.nome),
+  });
+}
+
+async function toEventInput(
+  appointment: ClinicaNasNuvensAppointment,
+  cnnClient: ClinicaNasNuvensClient
+): Promise<GoogleCalendarEventInput> {
+  const summary = await cnnClient.getAppointmentSummary(appointment.id);
+  const procedimentos = appointment.procedimentos.map((p) => p.nome).join(", ");
+
+  const descriptionLines = [
+    appointment.observacoes,
+    procedimentos ? `Procedimentos: ${procedimentos}` : null,
+    appointment.telefoneCelularPaciente ? `Telefone: ${appointment.telefoneCelularPaciente}` : null,
+    appointment.emailPaciente ? `Email: ${appointment.emailPaciente}` : null,
+    `Status: ${appointment.status}`,
+  ].filter((line): line is string => Boolean(line));
+
   return {
-    summary: appointment.patientName,
-    description: appointment.notes,
-    location: appointment.location,
-    start: { dateTime: appointment.startAt, timeZone: TIME_ZONE },
-    end: { dateTime: appointment.endAt, timeZone: TIME_ZONE },
+    summary: summary.nomePaciente || procedimentos || "Consulta",
+    description: descriptionLines.join("\n"),
+    start: { dateTime: `${appointment.data}T${appointment.horaInicio}`, timeZone: TIME_ZONE },
+    end: { dateTime: `${appointment.data}T${appointment.horaFim}`, timeZone: TIME_ZONE },
   };
 }
 
@@ -50,9 +80,7 @@ function toEventInput(appointment: ClinicaNasNuvensAppointment): GoogleCalendarE
  * skipping appointments that haven't changed since the last run.
  *
  * Does NOT currently delete Google events for appointments cancelled in
- * CNN or removed from the sync window — only create/update. Add that once
- * the real "cancelled" semantics of the CNN agenda endpoint are confirmed
- * (see the note in clinica-nas-nuvens/client.ts).
+ * CNN or removed from the sync window — only create/update.
  */
 export async function syncClinicaNasNuvensAgendaToGoogleCalendar(): Promise<SyncResult> {
   const result: SyncResult = { created: 0, updated: 0, skipped: 0, errors: [] };
@@ -85,39 +113,41 @@ export async function syncClinicaNasNuvensAgendaToGoogleCalendar(): Promise<Sync
   }
 
   for (const appointment of appointments) {
+    const cnnAppointmentId = String(appointment.id);
     try {
+      const currentFingerprint = fingerprint(appointment);
       const existing = await prisma.syncedAppointment.findUnique({
-        where: { cnnAppointmentId: appointment.id },
+        where: { cnnAppointmentId },
       });
 
-      if (existing && existing.sourceUpdatedAt === appointment.updatedAt) {
+      if (existing && existing.sourceUpdatedAt === currentFingerprint) {
         result.skipped += 1;
         continue;
       }
 
-      const eventInput = toEventInput(appointment);
+      const eventInput = await toEventInput(appointment, cnnClient);
 
       if (existing) {
         await googleClient.updateEvent(existing.googleCalendarId, existing.googleEventId, eventInput);
         await prisma.syncedAppointment.update({
           where: { id: existing.id },
-          data: { sourceUpdatedAt: appointment.updatedAt, syncedAt: new Date() },
+          data: { sourceUpdatedAt: currentFingerprint, syncedAt: new Date() },
         });
         result.updated += 1;
       } else {
         const event = await googleClient.insertEvent(DEFAULT_CALENDAR_ID, eventInput);
         await prisma.syncedAppointment.create({
           data: {
-            cnnAppointmentId: appointment.id,
+            cnnAppointmentId,
             googleEventId: event.id,
             googleCalendarId: DEFAULT_CALENDAR_ID,
-            sourceUpdatedAt: appointment.updatedAt,
+            sourceUpdatedAt: currentFingerprint,
           },
         });
         result.created += 1;
       }
     } catch (err) {
-      result.errors.push(`Appointment ${appointment.id}: ${describeError(err)}`);
+      result.errors.push(`Appointment ${cnnAppointmentId}: ${describeError(err)}`);
     }
   }
 

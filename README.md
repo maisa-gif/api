@@ -51,7 +51,7 @@ External API integrations (settings toggle, stored credentials, API client) live
 
 The settings UI at `/settings/integrations` (`src/app/settings/integrations/page.tsx`) renders one card per registry entry via `src/components/integrations/IntegrationCard.tsx`, backed by `GET/PATCH /api/integrations/[type]`.
 
-Currently implemented: **Clínica nas Nuvens** (`CLINICA_NAS_NUVENS`) — see `.env.example` for the required environment variables. The exact token endpoint/paths in `src/lib/integrations/clinica-nas-nuvens/client.ts` are a best-effort scaffold (automated docs lookup was blocked) and should be verified against https://api.clinicanasnuvens.com.br before production use.
+Currently implemented: **Clínica nas Nuvens** (`CLINICA_NAS_NUVENS`) — see `.env.example` for the required environment variables. `src/lib/integrations/clinica-nas-nuvens/client.ts` is confirmed against the real API (discovered via its unauthenticated `/v2/api-docs` Swagger spec and live test calls): there's no OAuth2 token exchange, every request authenticates with HTTP Basic auth (`client_id`/`client_secret`) plus the `clinicaNasNuvens-cid` header, `GET /agenda/lista` requires ISO (`yyyy-MM-dd`) `dataInicial`/`dataFinal` and paginates, and patient names come from a follow-up `GET /agenda/{id}/resumida` call per appointment (not present on the list response).
 
 To add a new integration: add its key to `types.ts`, an entry in `registry.ts`, a `config.ts`/`client.ts` pair, and a migration if it needs extra fields beyond `enabled`/`token`.
 
