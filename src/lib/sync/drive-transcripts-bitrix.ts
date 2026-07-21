@@ -22,20 +22,18 @@ function describeError(err: unknown): string {
 /**
  * Extracts the meeting/event name (== patient name, since our synced
  * Calendar events are titled with the patient's name) from a Gemini
- * notes file name. Unverified against a real Drive file name — only
- * seen a sanitized downloaded copy
- * ("Maisa__20260717_19_48_UTC__Anotac_o_es_do_Gemini.pdf") — so this
- * looks for the first date/UTC-like token and takes everything before
- * it, falling back to splitting on "Anota"/"Gemini". Adjust once tested
- * against real files.
+ * notes file name. Confirmed against real Drive file names, e.g.
+ * "Victor Cirne Carvalho – 2026/07/21 15:51 GMT-03:00 – Anotações do
+ * Gemini" — finds the "YYYY/MM/DD HH:MM GMT±HH:MM" token and takes
+ * everything before it, so a dash inside the title itself (e.g. a
+ * generic meeting called "Alinhamento Dash – Planilha") doesn't get
+ * mistaken for the separator.
  */
 export function extractEventNameFromFileName(fileName: string): string {
   const withoutExt = fileName.replace(/\.[a-z0-9]+$/i, "");
-  const dateTokenMatch = withoutExt.match(
-    /^(.*?)[\s_-]{1,3}\d{6,8}[_-]?\d{0,2}[_-]?\d{0,2}[_-]?(?:UTC)?/i
-  );
-  const base = dateTokenMatch?.[1] ?? withoutExt.split(/anota[cç][aã]o|gemini/i)[0];
-  return base.replace(/[\s_-]+$/g, "").replace(/_/g, " ").trim();
+  const dateMatch = withoutExt.match(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}\s+GMT[+-]\d{2}:\d{2}/);
+  const namePart = dateMatch ? withoutExt.slice(0, dateMatch.index) : withoutExt;
+  return namePart.replace(/[\s–—-]+$/g, "").trim();
 }
 
 /**
