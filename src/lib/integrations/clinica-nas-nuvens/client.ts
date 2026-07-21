@@ -162,21 +162,28 @@ export class ClinicaNasNuvensClient {
    * transcript from the appointment record, since the CNN API has no
    * document/attachment endpoint for a patient's prontuário.
    *
-   * UNVERIFIED: PUT /agenda/{id}'s accepted request body isn't confirmed
-   * against real docs — this does a read-modify-write (GET the full
-   * appointment, change only observacoes, PUT the whole object back),
-   * which is the safest guess without a confirmed write schema. Adjust
-   * if the real API rejects it.
+   * PUT /agenda/{id} expects a different write DTO (AgendaAlteracaoFormAPI)
+   * than GET returns (AgendaFormRetornoAPI) — confirmed via a real 400
+   * ("Unrecognized field \"id\"...") that also listed the write DTO's 22
+   * known properties. It rejects `id` (already in the URL) and has no
+   * `urlSalaEspera` (a GET-only field), so those are stripped from the
+   * read-modify-write body. The other ~10 write-only fields (the
+   * `notificar*` flags, `salaEspera`, `idPacienteConvenio`) aren't in the
+   * GET response at all and are simply omitted — unconfirmed whether the
+   * API treats them as optional or defaults them sensibly when absent.
    */
   async appendAppointmentNote(id: number, note: string): Promise<void> {
-    const current = await this.getAppointment(id);
-    if (current.observacoes?.includes(note)) return;
+    const current = (await this.getAppointment(id)) as unknown as Record<string, unknown>;
+    const existingNotes = typeof current.observacoes === "string" ? current.observacoes : null;
+    if (existingNotes?.includes(note)) return;
 
-    const observacoes = current.observacoes ? `${current.observacoes}\n${note}` : note;
+    const body: Record<string, unknown> = { ...current, observacoes: existingNotes ? `${existingNotes}\n${note}` : note };
+    delete body.id;
+    delete body.urlSalaEspera;
 
     await this.request<unknown>(AGENDA_PATH(id), {
       method: "PUT",
-      body: JSON.stringify({ ...current, observacoes }),
+      body: JSON.stringify(body),
     });
   }
 
