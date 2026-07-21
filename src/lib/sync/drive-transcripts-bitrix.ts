@@ -154,12 +154,12 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
   for (const file of files) {
     try {
       const existing = await prisma.syncedTranscript.findUnique({ where: { driveFileId: file.id } });
-      // Only "error" rows are retried — a transient/fixable failure (like
-      // the Bitrix webhook missing a permission) shouldn't be skipped
-      // forever just because a row already exists for it. no_match/
-      // ambiguous outcomes are left alone: those need a human decision,
-      // not an automatic retry.
-      if (existing && existing.status !== "error") {
+      // "error" and "no_match" rows are retried — both are transient/
+      // fixable outcomes (a Bitrix permission issue, or a matching
+      // strategy that hadn't been tuned yet), unlike "ambiguous" or
+      // "synced" which are left alone (need a human decision, or are
+      // already done).
+      if (existing && existing.status !== "error" && existing.status !== "no_match") {
         result.skipped += 1;
         continue;
       }
