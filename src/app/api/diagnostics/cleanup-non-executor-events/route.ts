@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { ClinicaNasNuvensClient } from "@/lib/integrations/clinica-nas-nuvens/client";
+import {
+  ClinicaNasNuvensApiError,
+  ClinicaNasNuvensClient,
+} from "@/lib/integrations/clinica-nas-nuvens/client";
 import { GoogleCalendarClient } from "@/lib/integrations/google-calendar/client";
 import { getIntegrationStatus } from "@/lib/integrations/service";
 import { prisma } from "@/lib/prisma";
@@ -13,6 +16,17 @@ import { prisma } from "@/lib/prisma";
  * professional (both the Google Calendar event and the SyncedAppointment
  * tracking row), leaving only their appointments going forward.
  */
+// Raise past the Hobby-plan default 10s — 100+ sequential CNN calls can
+// take a while.
+export const maxDuration = 60;
+
+function describeError(err: unknown): string {
+  if (err instanceof ClinicaNasNuvensApiError) {
+    return `${err.message} (status ${err.status}, body: ${JSON.stringify(err.body)})`;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
@@ -62,7 +76,7 @@ export async function GET(request: Request) {
       await prisma.syncedAppointment.delete({ where: { id: row.id } });
       removed += 1;
     } catch (err) {
-      errors.push(`Appointment ${row.cnnAppointmentId}: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(`Appointment ${row.cnnAppointmentId}: ${describeError(err)}`);
     }
   }
 
