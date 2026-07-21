@@ -8,6 +8,11 @@ import { syncClinicaNasNuvensAgendaToGoogleCalendar } from "@/lib/sync/clinica-n
  * `Authorization: Bearer $CRON_SECRET` automatically when CRON_SECRET is
  * set as an env var; any other scheduler must send the same header.
  */
+// Fetching each appointment's summary (for the patient name) plus a
+// Google Calendar call per appointment adds up past the Hobby-plan 10s
+// default as the agenda grows.
+export const maxDuration = 60;
+
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
