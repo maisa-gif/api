@@ -1,7 +1,12 @@
 import { GoogleDriveApiError, GoogleDriveClient, type DriveFile } from "@/lib/integrations/google-drive/client";
-import { BitrixApiError, BitrixClient } from "@/lib/integrations/bitrix/client";
+import { BitrixApiError, BitrixClient, type BitrixContact } from "@/lib/integrations/bitrix/client";
 import { hasBitrixConfig } from "@/lib/integrations/bitrix/config";
 import { getGoogleCalendarConnection } from "@/lib/integrations/google-calendar/connection";
+import {
+  ClinicaNasNuvensApiError,
+  ClinicaNasNuvensClient,
+} from "@/lib/integrations/clinica-nas-nuvens/client";
+import { getIntegrationStatus } from "@/lib/integrations/service";
 import { prisma } from "@/lib/prisma";
 
 export interface DriveTranscriptSyncResult {
@@ -13,33 +18,103 @@ export interface DriveTranscriptSyncResult {
 }
 
 function describeError(err: unknown): string {
-  if (err instanceof GoogleDriveApiError || err instanceof BitrixApiError) {
+  if (
+    err instanceof GoogleDriveApiError ||
+    err instanceof BitrixApiError ||
+    err instanceof ClinicaNasNuvensApiError
+  ) {
     return `${err.message} (status ${err.status}, body: ${JSON.stringify(err.body)})`;
   }
   return err instanceof Error ? err.message : String(err);
 }
 
+// Same professional filter as the agenda sync (src/lib/sync/clinica-nas-nuvens-google-calendar.ts) —
+// transcripts are only relevant for that professional's consultations.
+const EXECUTOR_ID = process.env.CLINICA_NAS_NUVENS_EXECUTOR_ID
+  ? Number(process.env.CLINICA_NAS_NUVENS_EXECUTOR_ID)
+  : undefined;
+
+function normalizeName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
 /**
- * Extracts the meeting/event name (== patient name, since our synced
- * Calendar events are titled with the patient's name) from a Gemini
- * notes file name. Confirmed against real Drive file names, e.g.
- * "Victor Cirne Carvalho – 2026/07/21 15:51 GMT-03:00 – Anotações do
- * Gemini" — finds the "YYYY/MM/DD HH:MM GMT±HH:MM" token and takes
- * everything before it, so a dash inside the title itself (e.g. a
- * generic meeting called "Alinhamento Dash – Planilha") doesn't get
- * mistaken for the separator.
+ * Parses a Gemini notes file name into the meeting/event name (== patient
+ * name, since our synced Calendar events are titled with the patient's
+ * name) and the appointment date. Confirmed against real Drive file
+ * names, e.g. "Victor Cirne Carvalho – 2026/07/21 15:51 GMT-03:00 –
+ * Anotações do Gemini" — finds the "YYYY/MM/DD HH:MM GMT±HH:MM" token,
+ * takes everything before it as the name (so a dash inside the title
+ * itself doesn't get mistaken for the separator), and the date part for
+ * looking up the matching CNN appointment.
  */
-export function extractEventNameFromFileName(fileName: string): string {
+export function parseGeminiFileName(fileName: string): { eventName: string; date: string | null } {
   const withoutExt = fileName.replace(/\.[a-z0-9]+$/i, "");
-  const dateMatch = withoutExt.match(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}\s+GMT[+-]\d{2}:\d{2}/);
+  const dateMatch = withoutExt.match(/(\d{4})\/(\d{2})\/(\d{2})\s+\d{2}:\d{2}\s+GMT[+-]\d{2}:\d{2}/);
   const namePart = dateMatch ? withoutExt.slice(0, dateMatch.index) : withoutExt;
-  return namePart.replace(/[\s–—-]+$/g, "").trim();
+  const eventName = namePart.replace(/[\s–—-]+$/g, "").trim();
+  const date = dateMatch ? `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}` : null;
+  return { eventName, date };
+}
+
+/**
+ * Finds the CNN appointment matching `patientName` on `date` and returns
+ * its phone number — CNN's per-appointment `telefoneCelularPaciente` is a
+ * more reliable Bitrix match key than the name alone (no accent/spelling
+ * ambiguity). Returns null if no CNN appointment matches, so the caller
+ * can fall back to name-based matching.
+ */
+async function findPatientPhone(
+  cnnClient: ClinicaNasNuvensClient,
+  patientName: string,
+  date: string
+): Promise<string | null> {
+  const appointments = await cnnClient.listAppointments(date, date, EXECUTOR_ID);
+  const target = normalizeName(patientName);
+
+  for (const appointment of appointments) {
+    const summary = await cnnClient.getAppointmentSummary(appointment.id);
+    if (normalizeName(summary.nomePaciente) === target) {
+      return appointment.telefoneCelularPaciente;
+    }
+  }
+
+  return null;
+}
+
+async function findMatchingContacts(
+  bitrixClient: BitrixClient,
+  cnnClient: ClinicaNasNuvensClient | null,
+  eventName: string,
+  date: string | null
+): Promise<{ contacts: BitrixContact[]; matchedBy: "phone" | "name" }> {
+  if (cnnClient && date) {
+    try {
+      const phone = await findPatientPhone(cnnClient, eventName, date);
+      if (phone) {
+        const byPhone = await bitrixClient.findContactsByPhone(phone);
+        if (byPhone.length > 0) {
+          return { contacts: byPhone, matchedBy: "phone" };
+        }
+      }
+    } catch {
+      // CNN lookup failing (e.g. no appointment that day) isn't fatal —
+      // fall through to name matching below.
+    }
+  }
+
+  return { contacts: await bitrixClient.findContactsByName(eventName), matchedBy: "name" };
 }
 
 /**
  * Finds new Google Meet "Gemini notes" files in Drive, matches each to a
- * Bitrix24 contact by the patient name embedded in the file name, and
- * attaches the file to that contact's CRM timeline.
+ * Bitrix24 contact (by the CNN patient's phone number when available,
+ * falling back to the name embedded in the file name), and attaches the
+ * file to that contact's CRM timeline.
  */
 export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyncResult> {
   const result: DriveTranscriptSyncResult = {
@@ -60,6 +135,10 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
     result.errors.push("Google is not connected (needed for Drive access too).");
     return result;
   }
+
+  const cnnStatus = await getIntegrationStatus("CLINICA_NAS_NUVENS");
+  const cnnClient =
+    cnnStatus.enabled && cnnStatus.token ? new ClinicaNasNuvensClient(cnnStatus.token) : null;
 
   const driveClient = new GoogleDriveClient();
   const bitrixClient = new BitrixClient();
@@ -85,15 +164,17 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
         continue;
       }
 
-      const matchedName = extractEventNameFromFileName(file.name);
-      const contacts = matchedName ? await bitrixClient.findContactsByName(matchedName) : [];
+      const { eventName, date } = parseGeminiFileName(file.name);
+      const { contacts, matchedBy } = eventName
+        ? await findMatchingContacts(bitrixClient, cnnClient, eventName, date)
+        : { contacts: [] as BitrixContact[], matchedBy: "name" as const };
 
       if (contacts.length === 0) {
         result.noMatch += 1;
         await prisma.syncedTranscript.upsert({
           where: { driveFileId: file.id },
-          create: { driveFileId: file.id, driveFileName: file.name, matchedName, status: "no_match" },
-          update: { matchedName, status: "no_match", errorMessage: null, syncedAt: new Date() },
+          create: { driveFileId: file.id, driveFileName: file.name, matchedName: eventName, status: "no_match" },
+          update: { matchedName: eventName, status: "no_match", errorMessage: null, syncedAt: new Date() },
         });
         continue;
       }
@@ -102,8 +183,8 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
         result.ambiguous += 1;
         await prisma.syncedTranscript.upsert({
           where: { driveFileId: file.id },
-          create: { driveFileId: file.id, driveFileName: file.name, matchedName, status: "ambiguous" },
-          update: { matchedName, status: "ambiguous", errorMessage: null, syncedAt: new Date() },
+          create: { driveFileId: file.id, driveFileName: file.name, matchedName: eventName, status: "ambiguous" },
+          update: { matchedName: eventName, status: "ambiguous", errorMessage: null, syncedAt: new Date() },
         });
         continue;
       }
@@ -115,7 +196,7 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
 
       await bitrixClient.attachFileToContactTimeline(
         contact.ID,
-        `Gravação/transcrição da consulta (${file.name})`,
+        `Gravação/transcrição da consulta (${file.name})${matchedBy === "phone" ? " — casado por telefone" : ""}`,
         { name: attachmentName, bytes }
       );
 
@@ -124,12 +205,12 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
         create: {
           driveFileId: file.id,
           driveFileName: file.name,
-          matchedName,
+          matchedName: eventName,
           bitrixContactId: contact.ID,
           status: "synced",
         },
         update: {
-          matchedName,
+          matchedName: eventName,
           bitrixContactId: contact.ID,
           status: "synced",
           errorMessage: null,

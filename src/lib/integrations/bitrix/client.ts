@@ -1,10 +1,16 @@
 import { getBitrixWebhookUrl } from "./config";
 
+export interface BitrixPhone {
+  VALUE: string;
+  VALUE_TYPE?: string;
+}
+
 export interface BitrixContact {
   ID: string;
   NAME?: string;
   LAST_NAME?: string;
   SECOND_NAME?: string;
+  PHONE?: BitrixPhone[];
 }
 
 export class BitrixApiError extends Error {
@@ -15,6 +21,10 @@ export class BitrixApiError extends Error {
   ) {
     super(message);
   }
+}
+
+function normalizePhone(value: string): string {
+  return value.replace(/\D/g, "");
 }
 
 function normalizeName(value: string): string {
@@ -86,6 +96,29 @@ export class BitrixClient {
       );
       return combined.includes(firstWord) && combined.includes(lastWord);
     });
+  }
+
+  /**
+   * Finds contacts by phone number, comparing digits only (formatting
+   * like "(18) 99715-8051" vs "5518997158051" varies between what CNN
+   * records and what's stored in Bitrix). Unverified against real
+   * Bitrix24 phone data — Bitrix's PHONE multifield filter behavior may
+   * need adjusting once tested.
+   */
+  async findContactsByPhone(phone: string): Promise<BitrixContact[]> {
+    const digits = normalizePhone(phone);
+    if (!digits) return [];
+
+    const candidates = await this.call<BitrixContact[]>("crm.contact.list", {
+      filter: { PHONE: digits },
+      select: ["ID", "NAME", "LAST_NAME", "SECOND_NAME", "PHONE"],
+    });
+
+    // Belt-and-suspenders client-side check in case Bitrix's filter is
+    // looser than an exact/contains digit match.
+    return candidates.filter((contact) =>
+      (contact.PHONE ?? []).some((p) => normalizePhone(p.VALUE).includes(digits.slice(-8)))
+    );
   }
 
   /**
