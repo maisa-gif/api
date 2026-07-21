@@ -6,27 +6,18 @@ import { getClinicaNasNuvensEnvConfig } from "@/lib/integrations/clinica-nas-nuv
  * confirmed and hardcoded back into
  * src/lib/integrations/clinica-nas-nuvens/client.ts.
  *
- * Round 1: ~15 common OAuth2 token endpoint path guesses — all 404.
- * Round 2: ~13 common agenda/appointments resource path guesses with
- * direct Basic auth — all 404.
+ * Rounds 1-2 (removed): guessed ~28 individual endpoint paths, all 404.
+ * Round 3 (removed): found that /v2/api-docs returns a full Swagger 2.0
+ * spec (Springfox 2.9.2), unauthenticated.
  *
- * Round 3 (this version): instead of guessing more individual paths,
- * check whether the API exposes a Spring Boot OpenAPI/Swagger spec
- * (springdoc or springfox), which would list every real route/method
- * authoritatively in one response instead of more blind guesses.
+ * This version fetches that spec and returns a condensed summary
+ * (basePath + every real path/method/summary) instead of guessing —
+ * the spec is the authoritative source, no more guessing needed.
  */
-const CANDIDATE_SPEC_PATHS = [
-  "/v3/api-docs",
-  "/v3/api-docs.yaml",
-  "/api-docs",
-  "/v2/api-docs",
-  "/swagger.json",
-  "/swagger.yaml",
-  "/openapi.json",
-  "/openapi.yaml",
-  "/swagger-ui/index.html",
-  "/swagger-ui.html",
-];
+interface SwaggerV2Spec {
+  basePath?: string;
+  paths?: Record<string, Record<string, { summary?: string; operationId?: string }>>;
+}
 
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
@@ -39,30 +30,25 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { baseUrl, clientId, clientSecret } = getClinicaNasNuvensEnvConfig();
-  const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+  const { baseUrl } = getClinicaNasNuvensEnvConfig();
 
-  const results = await Promise.all(
-    CANDIDATE_SPEC_PATHS.map(async (path) => {
-      // Try both unauthenticated and with Basic auth — spec endpoints are
-      // often (but not always) left public.
-      const attempts = await Promise.all(
-        [
-          { label: "no-auth", headers: {} as Record<string, string> },
-          { label: "basic-auth", headers: { Authorization: `Basic ${basicAuth}` } },
-        ].map(async ({ label, headers }) => {
-          try {
-            const response = await fetch(`${baseUrl}${path}`, { method: "GET", headers });
-            const bodyText = await response.text();
-            return { label, status: response.status, bodyPreview: bodyText.slice(0, 300) };
-          } catch (err) {
-            return { label, status: null, bodyPreview: err instanceof Error ? err.message : String(err) };
-          }
-        })
-      );
-      return { path, attempts };
-    })
+  const response = await fetch(`${baseUrl}/v2/api-docs`);
+  if (!response.ok) {
+    return NextResponse.json(
+      { error: `/v2/api-docs returned ${response.status}`, body: await response.text() },
+      { status: 502 }
+    );
+  }
+
+  const spec = (await response.json()) as SwaggerV2Spec;
+
+  const routes = Object.entries(spec.paths ?? {}).flatMap(([path, methods]) =>
+    Object.entries(methods).map(([method, op]) => ({
+      method: method.toUpperCase(),
+      path,
+      summary: op.summary ?? op.operationId ?? null,
+    }))
   );
 
-  return NextResponse.json({ baseUrl, results });
+  return NextResponse.json({ basePath: spec.basePath ?? null, routeCount: routes.length, routes });
 }
