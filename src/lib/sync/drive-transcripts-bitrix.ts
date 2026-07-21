@@ -75,7 +75,12 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
   for (const file of files) {
     try {
       const existing = await prisma.syncedTranscript.findUnique({ where: { driveFileId: file.id } });
-      if (existing) {
+      // Only "error" rows are retried — a transient/fixable failure (like
+      // the Bitrix webhook missing a permission) shouldn't be skipped
+      // forever just because a row already exists for it. no_match/
+      // ambiguous outcomes are left alone: those need a human decision,
+      // not an automatic retry.
+      if (existing && existing.status !== "error") {
         result.skipped += 1;
         continue;
       }
@@ -85,16 +90,20 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
 
       if (contacts.length === 0) {
         result.noMatch += 1;
-        await prisma.syncedTranscript.create({
-          data: { driveFileId: file.id, driveFileName: file.name, matchedName, status: "no_match" },
+        await prisma.syncedTranscript.upsert({
+          where: { driveFileId: file.id },
+          create: { driveFileId: file.id, driveFileName: file.name, matchedName, status: "no_match" },
+          update: { matchedName, status: "no_match", errorMessage: null, syncedAt: new Date() },
         });
         continue;
       }
 
       if (contacts.length > 1) {
         result.ambiguous += 1;
-        await prisma.syncedTranscript.create({
-          data: { driveFileId: file.id, driveFileName: file.name, matchedName, status: "ambiguous" },
+        await prisma.syncedTranscript.upsert({
+          where: { driveFileId: file.id },
+          create: { driveFileId: file.id, driveFileName: file.name, matchedName, status: "ambiguous" },
+          update: { matchedName, status: "ambiguous", errorMessage: null, syncedAt: new Date() },
         });
         continue;
       }
@@ -110,21 +119,31 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
         { name: attachmentName, bytes }
       );
 
-      await prisma.syncedTranscript.create({
-        data: {
+      await prisma.syncedTranscript.upsert({
+        where: { driveFileId: file.id },
+        create: {
           driveFileId: file.id,
           driveFileName: file.name,
           matchedName,
           bitrixContactId: contact.ID,
           status: "synced",
         },
+        update: {
+          matchedName,
+          bitrixContactId: contact.ID,
+          status: "synced",
+          errorMessage: null,
+          syncedAt: new Date(),
+        },
       });
       result.synced += 1;
     } catch (err) {
       const message = describeError(err);
       result.errors.push(`File ${file.name}: ${message}`);
-      await prisma.syncedTranscript.create({
-        data: { driveFileId: file.id, driveFileName: file.name, status: "error", errorMessage: message },
+      await prisma.syncedTranscript.upsert({
+        where: { driveFileId: file.id },
+        create: { driveFileId: file.id, driveFileName: file.name, status: "error", errorMessage: message },
+        update: { status: "error", errorMessage: message, syncedAt: new Date() },
       });
     }
   }
