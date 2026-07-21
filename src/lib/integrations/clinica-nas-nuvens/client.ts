@@ -17,7 +17,6 @@ import { getClinicaNasNuvensEnvConfig } from "./config";
 const CID_HEADER = "clinicaNasNuvens-cid";
 const AGENDA_LISTA_PATH = "/agenda/lista";
 const AGENDA_RESUMIDA_PATH = (id: number) => `/agenda/${id}/resumida`;
-const EXECUTOR_AGENDA_LISTA_PATH = "/executor-agenda/lista";
 // Server-observed max in testing; loop pages beyond this if totalPaginas > 1.
 const PAGE_SIZE = 200;
 
@@ -86,7 +85,7 @@ export class ClinicaNasNuvensClient {
     }
   }
 
-  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const { baseUrl, clientId, clientSecret } = getClinicaNasNuvensEnvConfig();
     const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 
@@ -148,15 +147,6 @@ export class ClinicaNasNuvensClient {
   /** Fetches the patient name + a condensed status for a single appointment. */
   async getAppointmentSummary(id: number): Promise<ClinicaNasNuvensAppointmentSummary> {
     return this.request<ClinicaNasNuvensAppointmentSummary>(AGENDA_RESUMIDA_PATH(id));
-  }
-
-  /**
-   * Lists agenda "executors" (health professionals). Response shape not
-   * yet confirmed against a real call — used to look up a professional's
-   * codigoPessoaExecutor by name for filtering listAppointments().
-   */
-  async listExecutors(): Promise<unknown> {
-    return this.request(EXECUTOR_AGENDA_LISTA_PATH);
   }
 
   /** Sanity-checks the credentials + cid by making a lightweight call. */

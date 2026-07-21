@@ -63,8 +63,8 @@ The Clínica nas Nuvens agenda is synced one-way (CNN → Google) into a connect
 - `src/app/api/integrations/google-calendar/connect` — redirects to Google's OAuth consent screen.
 - `src/app/api/integrations/google-calendar/callback` — exchanges the code for tokens and stores them.
 - `src/app/api/integrations/google-calendar/disconnect` — clears the stored tokens.
-- `src/lib/sync/clinica-nas-nuvens-google-calendar.ts` — fetches upcoming CNN appointments and creates/updates matching Google Calendar events, tracked via the `SyncedAppointment` table so re-runs update instead of duplicating. Does not yet delete Google events for appointments cancelled in CNN (see the note in that file).
-- `src/app/api/cron/sync-agenda` — runs the sync above. Protected by a shared `CRON_SECRET` (checked as `Authorization: Bearer $CRON_SECRET`). `vercel.json` schedules it every 15 minutes via Vercel Cron — note the actual run frequency may be capped by your Vercel plan, and any other scheduler (e.g. a self-hosted cron) must send the same header.
+- `src/lib/sync/clinica-nas-nuvens-google-calendar.ts` — fetches upcoming CNN appointments and creates/updates matching Google Calendar events, tracked via the `SyncedAppointment` table so re-runs update instead of duplicating. Does not yet delete Google events for appointments cancelled in CNN (see the note in that file). Set `CLINICA_NAS_NUVENS_EXECUTOR_ID` to restrict the sync to one professional (CNN's `idPessoaExecutor`, found via `GET /executor-agenda/lista`) — leave unset to sync every professional's appointments.
+- `src/app/api/cron/sync-agenda` — runs the sync above. Protected by a shared `CRON_SECRET` (checked as `Authorization: Bearer $CRON_SECRET`). `vercel.json` schedules it once a day (`0 0 * * *`) via Vercel Cron — the Hobby plan caps cron frequency at once/day; a Pro plan (or a self-hosted scheduler sending the same header) can run it more often.
 
 #### Setting up Google OAuth credentials
 

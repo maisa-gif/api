@@ -14,6 +14,12 @@ import { prisma } from "@/lib/prisma";
 const DEFAULT_CALENDAR_ID = "primary";
 const SYNC_WINDOW_DAYS_AHEAD = 30;
 const TIME_ZONE = process.env.SYNC_TIME_ZONE ?? "America/Sao_Paulo";
+// Restricts the synced agenda to a single professional's
+// codigoPessoaExecutor (CNN's per-person ID, not the executor-agenda
+// record id). Unset syncs every professional's appointments.
+const EXECUTOR_ID = process.env.CLINICA_NAS_NUVENS_EXECUTOR_ID
+  ? Number(process.env.CLINICA_NAS_NUVENS_EXECUTOR_ID)
+  : undefined;
 
 export interface SyncResult {
   created: number;
@@ -106,7 +112,7 @@ export async function syncClinicaNasNuvensAgendaToGoogleCalendar(): Promise<Sync
 
   let appointments: ClinicaNasNuvensAppointment[];
   try {
-    appointments = await cnnClient.listAppointments(isoDate(from), isoDate(to));
+    appointments = await cnnClient.listAppointments(isoDate(from), isoDate(to), EXECUTOR_ID);
   } catch (err) {
     result.errors.push(`Failed to fetch CNN agenda: ${describeError(err)}`);
     return result;
