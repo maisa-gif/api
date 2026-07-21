@@ -72,18 +72,28 @@ async function findPatientPhone(
   cnnClient: ClinicaNasNuvensClient,
   patientName: string,
   date: string
-): Promise<string | null> {
+): Promise<{ phone: string | null; note: string }> {
   const appointments = await cnnClient.listAppointments(date, date, EXECUTOR_ID);
   const target = normalizeName(patientName);
+  const namesSeen: string[] = [];
 
   for (const appointment of appointments) {
     const summary = await cnnClient.getAppointmentSummary(appointment.id);
+    namesSeen.push(summary.nomePaciente);
     if (normalizeName(summary.nomePaciente) === target) {
-      return appointment.telefoneCelularPaciente;
+      return {
+        phone: appointment.telefoneCelularPaciente,
+        note: appointment.telefoneCelularPaciente
+          ? `CNN appointment found, phone=${appointment.telefoneCelularPaciente}`
+          : "CNN appointment found but has no phone on file",
+      };
     }
   }
 
-  return null;
+  return {
+    phone: null,
+    note: `No CNN appointment matched '${patientName}' on ${date} (saw: ${namesSeen.join(", ") || "none"})`,
+  };
 }
 
 async function findMatchingContacts(
@@ -91,23 +101,30 @@ async function findMatchingContacts(
   cnnClient: ClinicaNasNuvensClient | null,
   eventName: string,
   date: string | null
-): Promise<{ contacts: BitrixContact[]; matchedBy: "phone" | "name" }> {
+): Promise<{ contacts: BitrixContact[]; matchedBy: "phone" | "name"; note: string }> {
+  const notes: string[] = [];
+
   if (cnnClient && date) {
     try {
-      const phone = await findPatientPhone(cnnClient, eventName, date);
+      const { phone, note } = await findPatientPhone(cnnClient, eventName, date);
+      notes.push(note);
       if (phone) {
         const byPhone = await bitrixClient.findContactsByPhone(phone);
         if (byPhone.length > 0) {
-          return { contacts: byPhone, matchedBy: "phone" };
+          return { contacts: byPhone, matchedBy: "phone", note: notes.join("; ") };
         }
+        notes.push(`No Bitrix contact found for phone ${phone}`);
       }
-    } catch {
-      // CNN lookup failing (e.g. no appointment that day) isn't fatal —
-      // fall through to name matching below.
+    } catch (err) {
+      notes.push(`CNN lookup failed: ${describeError(err)}`);
     }
+  } else {
+    notes.push(cnnClient ? "No date parsed from file name" : "CNN integration not connected");
   }
 
-  return { contacts: await bitrixClient.findContactsByName(eventName), matchedBy: "name" };
+  const byName = await bitrixClient.findContactsByName(eventName);
+  notes.push(byName.length > 0 ? "Matched by name" : "No Bitrix contact found by name either");
+  return { contacts: byName, matchedBy: "name", note: notes.join("; ") };
 }
 
 /**
@@ -165,26 +182,44 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
       }
 
       const { eventName, date } = parseGeminiFileName(file.name);
-      const { contacts, matchedBy } = eventName
+      const { contacts, matchedBy, note } = eventName
         ? await findMatchingContacts(bitrixClient, cnnClient, eventName, date)
-        : { contacts: [] as BitrixContact[], matchedBy: "name" as const };
+        : { contacts: [] as BitrixContact[], matchedBy: "name" as const, note: "File name has no parseable event name" };
 
       if (contacts.length === 0) {
         result.noMatch += 1;
         await prisma.syncedTranscript.upsert({
           where: { driveFileId: file.id },
-          create: { driveFileId: file.id, driveFileName: file.name, matchedName: eventName, status: "no_match" },
-          update: { matchedName: eventName, status: "no_match", errorMessage: null, syncedAt: new Date() },
+          create: {
+            driveFileId: file.id,
+            driveFileName: file.name,
+            matchedName: eventName,
+            status: "no_match",
+            errorMessage: note,
+          },
+          update: { matchedName: eventName, status: "no_match", errorMessage: note, syncedAt: new Date() },
         });
         continue;
       }
 
       if (contacts.length > 1) {
         result.ambiguous += 1;
+        const ambiguousNote = `${note}; ${contacts.length} candidates: ${contacts.map((c) => c.ID).join(", ")}`;
         await prisma.syncedTranscript.upsert({
           where: { driveFileId: file.id },
-          create: { driveFileId: file.id, driveFileName: file.name, matchedName: eventName, status: "ambiguous" },
-          update: { matchedName: eventName, status: "ambiguous", errorMessage: null, syncedAt: new Date() },
+          create: {
+            driveFileId: file.id,
+            driveFileName: file.name,
+            matchedName: eventName,
+            status: "ambiguous",
+            errorMessage: ambiguousNote,
+          },
+          update: {
+            matchedName: eventName,
+            status: "ambiguous",
+            errorMessage: ambiguousNote,
+            syncedAt: new Date(),
+          },
         });
         continue;
       }
