@@ -191,6 +191,21 @@ export class ClinicaNasNuvensClient {
   ]);
 
   /**
+   * Nested write DTO for each `procedimentos` item
+   * (AgendaProcedimentoAlteracaoFormAPI) — also confirmed via a real 400
+   * ("Unrecognized field \"nome\"..."), also stricter than what GET
+   * returns (which additionally has `nome`, the procedure's display
+   * name).
+   */
+  private static readonly AGENDA_PROCEDIMENTO_WRITE_FIELDS = new Set([
+    "idEspecialidade",
+    "id",
+    "idTipoProcedimento",
+    "idPromocao",
+    "quantidade",
+  ]);
+
+  /**
    * Appends a line to an appointment's `observacoes` (no-op if already
    * present, so retries don't duplicate it) — used to link the Gemini
    * transcript from the appointment record, since the CNN API has no
@@ -210,6 +225,18 @@ export class ClinicaNasNuvensClient {
       }
     }
     body.observacoes = existingNotes ? `${existingNotes}\n${note}` : note;
+
+    if (Array.isArray(body.procedimentos)) {
+      body.procedimentos = body.procedimentos.map((p: Record<string, unknown>) => {
+        const filtered: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(p)) {
+          if (ClinicaNasNuvensClient.AGENDA_PROCEDIMENTO_WRITE_FIELDS.has(key)) {
+            filtered[key] = value;
+          }
+        }
+        return filtered;
+      });
+    }
 
     await this.request<unknown>(AGENDA_PATH(id), {
       method: "PUT",
