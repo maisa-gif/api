@@ -140,4 +140,11 @@ export class BitrixClient {
       },
     });
   }
+
+  /** Lists timeline comments on a contact — used to verify a post actually landed. */
+  async listContactTimelineComments(contactId: string): Promise<unknown[]> {
+    return this.call<unknown[]>("crm.timeline.comment.list", {
+      filter: { ENTITY_ID: contactId, ENTITY_TYPE: "contact" },
+    });
+  }
 }
