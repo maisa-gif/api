@@ -13,6 +13,27 @@ export interface BitrixContact {
   PHONE?: BitrixPhone[];
 }
 
+export interface BitrixDeal {
+  ID: string;
+  TITLE?: string;
+  STAGE_ID: string;
+  CATEGORY_ID: string;
+  CONTACT_ID?: string;
+  CLOSED?: "Y" | "N";
+  DATE_CREATE?: string;
+}
+
+export interface BitrixDealCategory {
+  ID: string;
+  NAME: string;
+}
+
+export interface BitrixDealStage {
+  STATUS_ID: string;
+  NAME: string;
+  SORT?: string;
+}
+
 export class BitrixApiError extends Error {
   constructor(
     message: string,
@@ -146,5 +167,38 @@ export class BitrixClient {
     return this.call<unknown[]>("crm.timeline.comment.list", {
       filter: { ENTITY_ID: contactId, ENTITY_TYPE: "contact" },
     });
+  }
+
+  /**
+   * Finds open deals linked to a contact, most recently created first.
+   * Deals don't carry their own phone field in Bitrix (phone lives on the
+   * contact/lead/company), so "matching a deal by phone" goes through the
+   * contact already matched by phone via findContactsByPhone().
+   */
+  async findOpenDealsByContact(contactId: string): Promise<BitrixDeal[]> {
+    const deals = await this.call<BitrixDeal[]>("crm.deal.list", {
+      filter: { CONTACT_ID: contactId, CLOSED: "N" },
+      select: ["ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "CONTACT_ID", "CLOSED", "DATE_CREATE"],
+      order: { DATE_CREATE: "DESC" },
+    });
+    return deals;
+  }
+
+  /** Moves a deal to a different pipeline stage. */
+  async updateDealStage(dealId: string, stageId: string): Promise<void> {
+    await this.call("crm.deal.update", {
+      id: dealId,
+      fields: { STAGE_ID: stageId },
+    });
+  }
+
+  /** Lists deal pipelines ("funis") — used to discover STAGE_IDs for updateDealStage(). */
+  async listDealCategories(): Promise<BitrixDealCategory[]> {
+    return this.call<BitrixDealCategory[]>("crm.dealcategory.list", {});
+  }
+
+  /** Lists the stages of a given pipeline (category ID "0" is the default pipeline). */
+  async listDealStages(categoryId: string): Promise<BitrixDealStage[]> {
+    return this.call<BitrixDealStage[]>("crm.dealcategory.stage.list", { id: categoryId });
   }
 }
