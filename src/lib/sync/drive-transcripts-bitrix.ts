@@ -34,6 +34,13 @@ const EXECUTOR_ID = process.env.CLINICA_NAS_NUVENS_EXECUTOR_ID
   ? Number(process.env.CLINICA_NAS_NUVENS_EXECUTOR_ID)
   : undefined;
 
+// Discovered via a temporary diagnostic route (crm.dealcategory.list /
+// crm.dealcategory.stage.list): the "Funil Comercial" pipeline and its
+// "Avaliação Realizada" stage, where a patient's deal should land once
+// their consultation transcript has been synced.
+const DEAL_CATEGORY_ID = "5";
+const DEAL_STAGE_AVALIACAO_REALIZADA = "C5:FINAL_INVOICE";
+
 function normalizeName(value: string): string {
   return value
     .normalize("NFD")
@@ -125,6 +132,31 @@ async function findMatchingContacts(
   const byName = await bitrixClient.findContactsByName(eventName);
   notes.push(byName.length > 0 ? "Matched by name" : "No Bitrix contact found by name either");
   return { contacts: byName, matchedBy: "name", note: notes.join("; ") };
+}
+
+/**
+ * Moves the contact's open deal in the "Funil Comercial" pipeline to
+ * "Avaliação Realizada", now that their consultation transcript has been
+ * attached. Best-effort: deals aren't guaranteed to exist for every
+ * contact (e.g. one not yet created, or already past this stage), so this
+ * never throws — it returns a note for cases worth surfacing.
+ */
+async function moveDealToAvaliacaoRealizada(
+  bitrixClient: BitrixClient,
+  contactId: string
+): Promise<string | null> {
+  const deals = await bitrixClient.findOpenDealsByContact(contactId);
+  const deal = deals.find((d) => d.CATEGORY_ID === DEAL_CATEGORY_ID);
+
+  if (!deal) {
+    return `No open deal in Funil Comercial for contact ${contactId}; stage not moved`;
+  }
+  if (deal.STAGE_ID === DEAL_STAGE_AVALIACAO_REALIZADA) {
+    return null;
+  }
+
+  await bitrixClient.updateDealStage(deal.ID, DEAL_STAGE_AVALIACAO_REALIZADA);
+  return null;
 }
 
 /**
@@ -235,6 +267,13 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
         { name: attachmentName, bytes }
       );
 
+      let dealNote: string | null;
+      try {
+        dealNote = await moveDealToAvaliacaoRealizada(bitrixClient, contact.ID);
+      } catch (err) {
+        dealNote = `Deal stage move failed: ${describeError(err)}`;
+      }
+
       await prisma.syncedTranscript.upsert({
         where: { driveFileId: file.id },
         create: {
@@ -243,12 +282,13 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
           matchedName: eventName,
           bitrixContactId: contact.ID,
           status: "synced",
+          errorMessage: dealNote,
         },
         update: {
           matchedName: eventName,
           bitrixContactId: contact.ID,
           status: "synced",
-          errorMessage: null,
+          errorMessage: dealNote,
           syncedAt: new Date(),
         },
       });
