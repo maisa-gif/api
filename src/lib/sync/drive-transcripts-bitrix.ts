@@ -41,6 +41,12 @@ const EXECUTOR_ID = process.env.CLINICA_NAS_NUVENS_EXECUTOR_ID
 const DEAL_CATEGORY_ID = "5";
 const DEAL_STAGE_AVALIACAO_REALIZADA = "C5:FINAL_INVOICE";
 
+// Each file needing real work (CNN lookup, Drive download, Bitrix calls)
+// takes a few seconds — capping this keeps a run comfortably inside
+// Vercel's 60s function limit. Runs every 30 min via GitHub Actions, so
+// anything left over is picked up on the next run.
+const MAX_FILES_PROCESSED_PER_RUN = 8;
+
 function normalizeName(value: string): string {
   return value
     .normalize("NFD")
@@ -200,6 +206,8 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
     return result;
   }
 
+  let processed = 0;
+
   for (const file of files) {
     try {
       const existing = await prisma.syncedTranscript.findUnique({ where: { driveFileId: file.id } });
@@ -212,6 +220,12 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
         result.skipped += 1;
         continue;
       }
+
+      if (processed >= MAX_FILES_PROCESSED_PER_RUN) {
+        result.skipped += 1;
+        continue;
+      }
+      processed += 1;
 
       const { eventName, date } = parseGeminiFileName(file.name);
       const { contacts, matchedBy, note } = eventName
