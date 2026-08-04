@@ -192,6 +192,14 @@ export class BitrixClient {
     });
   }
 
+  async getDeal(dealId: string): Promise<BitrixDeal> {
+    return this.call<BitrixDeal>("crm.deal.get", { id: dealId });
+  }
+
+  async getContact(contactId: string): Promise<BitrixContact> {
+    return this.call<BitrixContact>("crm.contact.get", { id: contactId });
+  }
+
   /** Lists deal pipelines ("funis") — used to discover STAGE_IDs for updateDealStage(). */
   async listDealCategories(): Promise<BitrixDealCategory[]> {
     return this.call<BitrixDealCategory[]>("crm.dealcategory.list", {});
