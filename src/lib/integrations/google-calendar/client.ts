@@ -92,6 +92,34 @@ export class GoogleCalendarClient {
     );
   }
 
+  async getEvent(calendarId: string, eventId: string): Promise<GoogleCalendarEvent> {
+    return this.request<GoogleCalendarEvent>(
+      `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
+    );
+  }
+
+  /**
+   * One-off backfill helper: adds a Meet link to an event that doesn't have
+   * one yet (existing events created before insertEvent() started requesting
+   * conferenceData). Same conferenceDataVersion=1 requirement as insertEvent.
+   */
+  async addMeetLink(calendarId: string, eventId: string): Promise<GoogleCalendarEvent> {
+    return this.request<GoogleCalendarEvent>(
+      `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}?conferenceDataVersion=1`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          conferenceData: {
+            createRequest: {
+              requestId: randomUUID(),
+              conferenceSolutionKey: { type: "hangoutsMeet" },
+            },
+          },
+        }),
+      }
+    );
+  }
+
   /** Idempotent: a 404/410 (already gone) is treated as success. */
   async deleteEvent(calendarId: string, eventId: string): Promise<void> {
     try {
