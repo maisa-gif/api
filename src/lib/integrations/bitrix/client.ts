@@ -120,25 +120,29 @@ export class BitrixClient {
   }
 
   /**
-   * Finds contacts by phone number, comparing digits only (formatting
-   * like "(18) 99715-8051" vs "5518997158051" varies between what CNN
-   * records and what's stored in Bitrix). Unverified against real
-   * Bitrix24 phone data — Bitrix's PHONE multifield filter behavior may
-   * need adjusting once tested.
+   * Finds contacts by phone number, comparing digits only. An exact-match
+   * filter on the full digit string was confirmed (via real data) to miss
+   * real matches whenever CNN's phone and Bitrix's stored PHONE.VALUE
+   * disagree on the country code prefix (e.g. CNN "(18) 98176-1667" ->
+   * "18981761667" vs Bitrix "5518981761667") — same underlying number,
+   * different digit count, so an exact filter never matches. Anchoring the
+   * server-side filter on just the last 8 digits (substring match via
+   * Bitrix's "%" filter operator) sidesteps the prefix mismatch; the
+   * client-side check below still guards against that substring filter
+   * being too loose.
    */
   async findContactsByPhone(phone: string): Promise<BitrixContact[]> {
     const digits = normalizePhone(phone);
     if (!digits) return [];
+    const last8 = digits.slice(-8);
 
     const candidates = await this.call<BitrixContact[]>("crm.contact.list", {
-      filter: { PHONE: digits },
+      filter: { "%PHONE": last8 },
       select: ["ID", "NAME", "LAST_NAME", "SECOND_NAME", "PHONE"],
     });
 
-    // Belt-and-suspenders client-side check in case Bitrix's filter is
-    // looser than an exact/contains digit match.
     return candidates.filter((contact) =>
-      (contact.PHONE ?? []).some((p) => normalizePhone(p.VALUE).includes(digits.slice(-8)))
+      (contact.PHONE ?? []).some((p) => normalizePhone(p.VALUE).includes(last8))
     );
   }
 
