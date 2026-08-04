@@ -120,13 +120,18 @@ export class BitrixClient {
   }
 
   /**
-   * Finds contacts by phone number, comparing digits only. Confirmed via
-   * real data that Bitrix's PHONE multifield filter only matches an EXACT
-   * stored value — no substring/"%" operator support — and that CNN's
-   * phone often omits the "55" country code Bitrix stores it with (CNN
-   * "(18) 98176-1667" -> "18981761667" vs Bitrix "5518981761667"). A "%PHONE"
-   * substring filter silently returned nothing, so this queries both the
-   * with- and without-"55" variants as an OR of exact matches instead.
+   * Finds contacts by phone number, comparing digits only. Confirmed
+   * against real Bitrix data (via a debug helper trying several
+   * strategies) that: (1) the PHONE multifield filter only matches an
+   * EXACT stored value, no "%" substring operator support (a "%PHONE"
+   * filter silently returned unrelated contacts, not a real substring
+   * match); and (2) a combined `{LOGIC: "OR", ...}` filter across two
+   * PHONE variants also returned nothing, even though one variant alone
+   * matches — crm.contact.list doesn't seem to support that filter shape.
+   * So this just tries two plain sequential exact-match queries instead:
+   * CNN's phone often omits the "55" country code Bitrix stores it with
+   * (CNN "(18) 98176-1667" -> "18981761667" vs Bitrix "5518981761667"),
+   * and the "55"-prefixed variant is the one confirmed to match.
    */
   async findContactsByPhone(phone: string): Promise<BitrixContact[]> {
     const digits = normalizePhone(phone);
@@ -137,19 +142,20 @@ export class BitrixClient {
     if (digits.startsWith("55")) variants.add(digits.slice(2));
     else variants.add(`55${digits}`);
 
-    const filter =
-      variants.size > 1
-        ? { LOGIC: "OR", ...Object.fromEntries([...variants].map((v, i) => [i, { PHONE: v }])) }
-        : { PHONE: [...variants][0] };
+    const found = new Map<string, BitrixContact>();
+    for (const variant of variants) {
+      const candidates = await this.call<BitrixContact[]>("crm.contact.list", {
+        filter: { PHONE: variant },
+        select: ["ID", "NAME", "LAST_NAME", "SECOND_NAME", "PHONE"],
+      });
+      for (const contact of candidates) {
+        if ((contact.PHONE ?? []).some((p) => normalizePhone(p.VALUE).includes(last8))) {
+          found.set(contact.ID, contact);
+        }
+      }
+    }
 
-    const candidates = await this.call<BitrixContact[]>("crm.contact.list", {
-      filter,
-      select: ["ID", "NAME", "LAST_NAME", "SECOND_NAME", "PHONE"],
-    });
-
-    return candidates.filter((contact) =>
-      (contact.PHONE ?? []).some((p) => normalizePhone(p.VALUE).includes(last8))
-    );
+    return [...found.values()];
   }
 
   /**
