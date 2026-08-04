@@ -40,6 +40,14 @@ export async function GET(request: Request) {
   const contact = await bitrixClient.getContact(deal.CONTACT_ID);
   result.contact = contact;
 
+  const testPhone = new URL(request.url).searchParams.get("testPhone");
+  if (testPhone) {
+    result.phoneMatchTest = {
+      queriedWith: testPhone,
+      foundContacts: await bitrixClient.findContactsByPhone(testPhone),
+    };
+  }
+
   const driveClient = new GoogleDriveClient();
   const files = await driveClient.listGeminiNotes();
   result.recentDriveFiles = files.slice(0, 20).map((f) => ({ id: f.id, name: f.name, createdTime: f.createdTime }));
