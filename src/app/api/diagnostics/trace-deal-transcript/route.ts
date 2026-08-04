@@ -46,6 +46,7 @@ export async function GET(request: Request) {
       queriedWith: testPhone,
       foundContacts: await bitrixClient.findContactsByPhone(testPhone),
     };
+    result.phoneDebug = await bitrixClient.debugPhoneSearch(testPhone);
   }
 
   const driveClient = new GoogleDriveClient();
