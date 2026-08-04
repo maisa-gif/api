@@ -10,6 +10,12 @@ import { prisma } from "@/lib/prisma";
  */
 export const maxDuration = 60;
 
+// Each row costs 1-2 Google Calendar API round trips; capping keeps a call
+// comfortably inside Vercel's 60s limit. There are more synced appointments
+// than fit in one call, so this needs to be triggered a few times in a row
+// — safe to re-run since already-linked/past events are skipped.
+const MAX_ROWS_PER_CALL = 25;
+
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
@@ -21,7 +27,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const rows = await prisma.syncedAppointment.findMany();
+  const offset = Number(new URL(request.url).searchParams.get("offset") ?? "0");
+  const totalRows = await prisma.syncedAppointment.count();
+  const rows = await prisma.syncedAppointment.findMany({
+    orderBy: { id: "asc" },
+    skip: offset,
+    take: MAX_ROWS_PER_CALL,
+  });
   const googleClient = new GoogleCalendarClient();
 
   let added = 0;
@@ -55,5 +67,16 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.json({ added, alreadyHadLink, pastEvent, notFound, errors });
+  const nextOffset = offset + rows.length;
+  return NextResponse.json({
+    added,
+    alreadyHadLink,
+    pastEvent,
+    notFound,
+    errors,
+    processedRange: `${offset}-${nextOffset}`,
+    totalRows,
+    done: nextOffset >= totalRows,
+    nextOffset,
+  });
 }
