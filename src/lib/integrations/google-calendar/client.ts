@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getValidGoogleAccessToken } from "./connection";
 
 const API_BASE = "https://www.googleapis.com/calendar/v3";
@@ -13,6 +14,7 @@ export interface GoogleCalendarEventInput {
 export interface GoogleCalendarEvent extends GoogleCalendarEventInput {
   id: string;
   status: string;
+  hangoutLink?: string;
 }
 
 export class GoogleCalendarApiError extends Error {
@@ -50,13 +52,35 @@ export class GoogleCalendarClient {
     return (await response.json()) as T;
   }
 
+  /**
+   * Creates the event with a Google Meet link attached (conferenceDataVersion=1
+   * is required for the API to act on conferenceData at all). This is how the
+   * doctor gets a ready-to-join link on the synced appointment without having
+   * to add one by hand before starting the consultation.
+   */
   async insertEvent(calendarId: string, event: GoogleCalendarEventInput): Promise<GoogleCalendarEvent> {
-    return this.request<GoogleCalendarEvent>(`/calendars/${encodeURIComponent(calendarId)}/events`, {
-      method: "POST",
-      body: JSON.stringify(event),
-    });
+    return this.request<GoogleCalendarEvent>(
+      `/calendars/${encodeURIComponent(calendarId)}/events?conferenceDataVersion=1`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...event,
+          conferenceData: {
+            createRequest: {
+              requestId: randomUUID(),
+              conferenceSolutionKey: { type: "hangoutsMeet" },
+            },
+          },
+        }),
+      }
+    );
   }
 
+  /**
+   * PATCH (partial update), not PUT — a full replace would need conferenceData
+   * re-sent every time or it gets dropped, wiping out the Meet link created at
+   * insert time on every subsequent sync update.
+   */
   async updateEvent(
     calendarId: string,
     eventId: string,
@@ -64,7 +88,7 @@ export class GoogleCalendarClient {
   ): Promise<GoogleCalendarEvent> {
     return this.request<GoogleCalendarEvent>(
       `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
-      { method: "PUT", body: JSON.stringify(event) }
+      { method: "PATCH", body: JSON.stringify(event) }
     );
   }
 
