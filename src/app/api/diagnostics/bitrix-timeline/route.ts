@@ -19,6 +19,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const contactIdFilter = new URL(request.url).searchParams.get("contactId");
+
+  if (contactIdFilter) {
+    const bitrixClient = new BitrixClient();
+    const comments = await bitrixClient.listContactTimelineComments(contactIdFilter);
+    return NextResponse.json({ contactId: contactIdFilter, comments });
+  }
+
   const rows = await prisma.syncedTranscript.findMany({
     where: { status: "synced", bitrixContactId: { not: null } },
   });
