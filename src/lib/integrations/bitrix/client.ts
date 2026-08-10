@@ -128,19 +128,35 @@ export class BitrixClient {
    * match); and (2) a combined `{LOGIC: "OR", ...}` filter across two
    * PHONE variants also returned nothing, even though one variant alone
    * matches — crm.contact.list doesn't seem to support that filter shape.
-   * So this just tries two plain sequential exact-match queries instead:
-   * CNN's phone often omits the "55" country code Bitrix stores it with
-   * (CNN "(18) 98176-1667" -> "18981761667" vs Bitrix "5518981761667"),
-   * and the "55"-prefixed variant is the one confirmed to match.
+   * So this tries several plain sequential exact-match queries instead,
+   * covering two real mismatches seen in production: CNN's phone often
+   * omits the "55" country code Bitrix stores it with (CNN
+   * "(18) 98176-1667" -> "18981761667" vs Bitrix "5518981761667"), and
+   * older-style 8-digit local numbers missing the leading "9" Brazilian
+   * mobiles gained after ~2012 (CNN "(18) 9180-2703" vs a Bitrix contact
+   * saved with the modern 9-digit "(18) 99180-2703").
    */
   async findContactsByPhone(phone: string): Promise<BitrixContact[]> {
     const digits = normalizePhone(phone);
     if (!digits) return [];
     const last8 = digits.slice(-8);
 
-    const variants = new Set<string>([digits]);
-    if (digits.startsWith("55")) variants.add(digits.slice(2));
-    else variants.add(`55${digits}`);
+    const withoutCC = digits.startsWith("55") ? digits.slice(2) : digits;
+    const locals = new Set<string>([withoutCC]);
+    if (withoutCC.length === 10) {
+      // area code (2) + old 8-digit local number -> add the modern
+      // 9-digit form (leading "9" inserted after the area code).
+      locals.add(`${withoutCC.slice(0, 2)}9${withoutCC.slice(2)}`);
+    } else if (withoutCC.length === 11 && withoutCC[2] === "9") {
+      // area code (2) + modern 9-digit mobile -> add the old 8-digit form.
+      locals.add(`${withoutCC.slice(0, 2)}${withoutCC.slice(3)}`);
+    }
+
+    const variants = new Set<string>();
+    for (const local of locals) {
+      variants.add(local);
+      variants.add(`55${local}`);
+    }
 
     const found = new Map<string, BitrixContact>();
     for (const variant of variants) {
