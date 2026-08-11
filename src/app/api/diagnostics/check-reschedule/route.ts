@@ -6,17 +6,12 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * TEMPORARY diagnostic route — delete once it's clear why some
- * rescheduled patients (Ricardo Businaro, Ricardo Souza, Ronaldo
- * Marcilio) still show on today's Google Calendar. Searches CNN
- * appointments across a wide window (-14 to +30 days) matching the given
- * names, and cross-references each match's SyncedAppointment row +
- * current Google Calendar event date.
+ * rescheduled patients still show on today's Google Calendar. Lists
+ * today's Google Calendar events, matches by name, then looks up each
+ * match's CNN appointment directly by ID (via the reverse SyncedAppointment
+ * mapping) to compare current CNN status/date against the Google event.
  */
 export const maxDuration = 60;
-
-const EXECUTOR_ID = process.env.CLINICA_NAS_NUVENS_EXECUTOR_ID
-  ? Number(process.env.CLINICA_NAS_NUVENS_EXECUTOR_ID)
-  : undefined;
 
 function normalizeName(value: string): string {
   return value
@@ -48,44 +43,52 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "CNN integration disabled/missing token" }, { status: 500 });
   }
   const cnnClient = new ClinicaNasNuvensClient(cnnStatus.token);
+  const googleClient = new GoogleCalendarClient();
 
-  const from = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-  const to = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+  const now = new Date();
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(now);
+  endOfDay.setHours(23, 59, 59, 999);
 
-  const appointments = await cnnClient.listAppointments(isoDate(from), isoDate(to), EXECUTOR_ID);
+  const todaysEvents = await googleClient.listEvents(
+    "primary",
+    startOfDay.toISOString(),
+    endOfDay.toISOString()
+  );
 
   const matches = [];
-  for (const appt of appointments) {
-    const summary = await cnnClient.getAppointmentSummary(appt.id);
-    const normalized = normalizeName(summary.nomePaciente);
-    if (targetNames.some((t) => normalized.includes(t) || t.includes(normalized))) {
-      const syncedRow = await prisma.syncedAppointment.findUnique({
-        where: { cnnAppointmentId: String(appt.id) },
-      });
+  for (const event of todaysEvents) {
+    const normalized = normalizeName(event.summary ?? "");
+    if (!targetNames.some((t) => normalized.includes(t) || t.includes(normalized))) continue;
 
-      let googleEvent = null;
-      if (syncedRow) {
-        try {
-          const googleClient = new GoogleCalendarClient();
-          const event = await googleClient.getEvent(syncedRow.googleCalendarId, syncedRow.googleEventId);
-          googleEvent = { start: event.start, status: event.status };
-        } catch (err) {
-          googleEvent = { error: err instanceof Error ? err.message : String(err) };
-        }
+    const syncedRow = await prisma.syncedAppointment.findFirst({
+      where: { googleEventId: event.id },
+    });
+
+    let cnnAppointment = null;
+    if (syncedRow) {
+      try {
+        cnnAppointment = await cnnClient.getAppointmentSummary(Number(syncedRow.cnnAppointmentId));
+      } catch (err) {
+        cnnAppointment = { error: err instanceof Error ? err.message : String(err) };
       }
-
-      matches.push({
-        cnnAppointmentId: appt.id,
-        patientName: summary.nomePaciente,
-        status: appt.status,
-        data: appt.data,
-        horaInicio: appt.horaInicio,
-        syncedRow,
-        googleEvent,
-      });
     }
+
+    matches.push({
+      googleEventId: event.id,
+      googleSummary: event.summary,
+      googleStart: event.start,
+      googleStatus: event.status,
+      syncedRow,
+      cnnAppointment,
+    });
   }
 
-  return NextResponse.json({ targetNames, totalAppointmentsScanned: appointments.length, matches });
+  return NextResponse.json({
+    targetNames,
+    totalTodaysEvents: todaysEvents.length,
+    todaysEventSummaries: todaysEvents.map((e) => e.summary),
+    matches,
+  });
 }

@@ -98,6 +98,14 @@ export class GoogleCalendarClient {
     );
   }
 
+  async listEvents(calendarId: string, timeMin: string, timeMax: string): Promise<GoogleCalendarEvent[]> {
+    const params = new URLSearchParams({ timeMin, timeMax, singleEvents: "true", orderBy: "startTime" });
+    const data = await this.request<{ items: GoogleCalendarEvent[] }>(
+      `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`
+    );
+    return data.items;
+  }
+
   /**
    * One-off backfill helper: adds a Meet link to an event that doesn't have
    * one yet (existing events created before insertEvent() started requesting
