@@ -24,6 +24,7 @@ const EXECUTOR_ID = process.env.CLINICA_NAS_NUVENS_EXECUTOR_ID
 export interface SyncResult {
   created: number;
   updated: number;
+  deleted: number;
   skipped: number;
   errors: string[];
 }
@@ -85,11 +86,17 @@ async function toEventInput(
  * agenda and pushes them into the connected Google Calendar as events,
  * skipping appointments that haven't changed since the last run.
  *
- * Does NOT currently delete Google events for appointments cancelled in
- * CNN or removed from the sync window — only create/update.
+ * CNN doesn't edit an appointment in place when a patient reschedules —
+ * it deletes the old one and creates a new one under a different ID. So
+ * after syncing everything currently in the window, this also cleans up:
+ * any previously-synced appointment whose ID no longer shows up in this
+ * run's results, but whose last known date is today or later, is treated
+ * as cancelled/rescheduled-away and its Google event gets deleted. Rows
+ * whose last known date is in the past are left alone — they simply aged
+ * out of the [now, +30 days] window, which isn't evidence of cancellation.
  */
 export async function syncClinicaNasNuvensAgendaToGoogleCalendar(): Promise<SyncResult> {
-  const result: SyncResult = { created: 0, updated: 0, skipped: 0, errors: [] };
+  const result: SyncResult = { created: 0, updated: 0, deleted: 0, skipped: 0, errors: [] };
 
   const cnnStatus = await getIntegrationStatus("CLINICA_NAS_NUVENS");
   if (!cnnStatus.enabled || !cnnStatus.token) {
@@ -154,6 +161,33 @@ export async function syncClinicaNasNuvensAgendaToGoogleCalendar(): Promise<Sync
       }
     } catch (err) {
       result.errors.push(`Appointment ${cnnAppointmentId}: ${describeError(err)}`);
+    }
+  }
+
+  const currentIds = appointments.map((a) => String(a.id));
+  const isoToday = isoDate(from);
+  const staleCandidates = await prisma.syncedAppointment.findMany({
+    where: { cnnAppointmentId: { notIn: currentIds } },
+  });
+
+  for (const row of staleCandidates) {
+    let lastKnownDate: string | undefined;
+    try {
+      lastKnownDate = row.sourceUpdatedAt
+        ? (JSON.parse(row.sourceUpdatedAt) as { data?: string }).data
+        : undefined;
+    } catch {
+      lastKnownDate = undefined;
+    }
+
+    if (!lastKnownDate || lastKnownDate < isoToday) continue;
+
+    try {
+      await googleClient.deleteEvent(row.googleCalendarId, row.googleEventId);
+      await prisma.syncedAppointment.delete({ where: { id: row.id } });
+      result.deleted += 1;
+    } catch (err) {
+      result.errors.push(`Cleanup for cancelled appointment ${row.cnnAppointmentId}: ${describeError(err)}`);
     }
   }
 
