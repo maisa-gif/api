@@ -1,0 +1,23 @@
+name: TEMP - run diagnostic route
+
+# Temporary, manual-only workflow to trigger a one-off diagnostic route
+# and read its response via the job log. Delete this file once it's no
+# longer needed.
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: "Route path to call, e.g. /api/diagnostics/check-reschedule"
+        required: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: https://api-ochre-ten-68.vercel.app
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      ROUTE_PATH: ${{ inputs.path }}
+    steps:
+      - name: Call diagnostic route
+        run: |
+          curl -sf -H "Authorization: Bearer $CRON_SECRET" "$BASE_URL$ROUTE_PATH" | python3 -m json.tool
