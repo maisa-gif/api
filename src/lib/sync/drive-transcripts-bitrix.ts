@@ -44,8 +44,12 @@ const DEAL_STAGE_AVALIACAO_REALIZADA = "C5:FINAL_INVOICE";
 // Each file needing real work (CNN lookup, Drive download, Bitrix calls)
 // takes a few seconds — capping this keeps a run comfortably inside
 // Vercel's 60s function limit. Runs every 30 min via GitHub Actions, so
-// anything left over is picked up on the next run.
-const MAX_FILES_PROCESSED_PER_RUN = 8;
+// anything left over is picked up on the next run. Lowered from 8 to 4
+// after phone matching started trying more variants per lookup (up to 4
+// Bitrix calls instead of 1) plus the deal-stage-move step added on top —
+// 8 files/run was consistently timing out at exactly 60s once that extra
+// per-file cost added up.
+const MAX_FILES_PROCESSED_PER_RUN = 4;
 
 function normalizeName(value: string): string {
   return value
