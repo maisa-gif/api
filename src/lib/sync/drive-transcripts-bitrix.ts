@@ -316,12 +316,17 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
     } catch (err) {
       const message = describeError(err);
       result.errors.push(`File ${file.name}: ${message}`);
-      // Google returns this 403 for files whose export/download isn't
-      // included in the connected account's Workspace plan — retrying
-      // never helps, so this is marked terminal (unlike ordinary "error"
-      // rows) to stop it from eating a processing slot every run.
+      // 403 FEATURE_NOT_AVAILABLE_ON_CURRENT_PLAN shows up from both sides:
+      // Google for a Workspace-plan-gated Drive export, and — as confirmed
+      // via a diagnostic dump of real errorMessage rows — from Bitrix24
+      // itself, rejecting crm.timeline.comment.add's file upload (the
+      // portal's plan doesn't include the Disk/file-attachment feature for
+      // API-driven timeline posts). Either way it's a permanent, non-file-
+      // specific restriction, so retrying never helps — mark it terminal
+      // (unlike ordinary "error" rows) to stop it from eating a processing
+      // slot every run.
       const isPlanRestricted =
-        err instanceof GoogleDriveApiError &&
+        (err instanceof GoogleDriveApiError || err instanceof BitrixApiError) &&
         err.status === 403 &&
         typeof err.body === "object" &&
         err.body !== null &&
