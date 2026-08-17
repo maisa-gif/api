@@ -14,6 +14,7 @@ export interface DriveTranscriptSyncResult {
   noMatch: number;
   ambiguous: number;
   skipped: number;
+  unsupported: number;
   errors: string[];
 }
 
@@ -181,6 +182,7 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
     noMatch: 0,
     ambiguous: 0,
     skipped: 0,
+    unsupported: 0,
     errors: [],
   };
 
@@ -332,6 +334,7 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
         err.body !== null &&
         (err.body as { error?: string }).error === "FEATURE_NOT_AVAILABLE_ON_CURRENT_PLAN";
       const status = isPlanRestricted ? "unsupported" : "error";
+      if (isPlanRestricted) result.unsupported += 1;
       await prisma.syncedTranscript.upsert({
         where: { driveFileId: file.id },
         create: { driveFileId: file.id, driveFileName: file.name, status, errorMessage: message },

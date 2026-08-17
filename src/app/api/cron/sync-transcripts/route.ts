@@ -21,6 +21,10 @@ export async function GET(request: Request) {
   }
 
   const result = await syncDriveTranscriptsToBitrix();
-  const status = result.errors.length > 0 && result.synced === 0 ? 502 : 200;
+  // "unsupported" errors are permanent, already-handled plan restrictions
+  // (see drive-transcripts-bitrix.ts) — they shouldn't page anyone, only
+  // genuine unresolved errors should.
+  const realErrorCount = result.errors.length - result.unsupported;
+  const status = realErrorCount > 0 && result.synced === 0 ? 502 : 200;
   return NextResponse.json(result, { status });
 }
