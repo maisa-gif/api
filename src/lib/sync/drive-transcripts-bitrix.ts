@@ -218,8 +218,10 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
       // "error" and "no_match" rows are retried — both are transient/
       // fixable outcomes (a Bitrix permission issue, or a matching
       // strategy that hadn't been tuned yet), unlike "ambiguous" or
-      // "synced" which are left alone (need a human decision, or are
-      // already done).
+      // "synced" (need a human decision, or already done) or
+      // "unsupported" (a permanent Google Workspace plan restriction —
+      // see the FEATURE_NOT_AVAILABLE_ON_CURRENT_PLAN check below) which
+      // are left alone.
       if (existing && existing.status !== "error" && existing.status !== "no_match") {
         result.skipped += 1;
         continue;
@@ -314,10 +316,21 @@ export async function syncDriveTranscriptsToBitrix(): Promise<DriveTranscriptSyn
     } catch (err) {
       const message = describeError(err);
       result.errors.push(`File ${file.name}: ${message}`);
+      // Google returns this 403 for files whose export/download isn't
+      // included in the connected account's Workspace plan — retrying
+      // never helps, so this is marked terminal (unlike ordinary "error"
+      // rows) to stop it from eating a processing slot every run.
+      const isPlanRestricted =
+        err instanceof GoogleDriveApiError &&
+        err.status === 403 &&
+        typeof err.body === "object" &&
+        err.body !== null &&
+        (err.body as { error?: string }).error === "FEATURE_NOT_AVAILABLE_ON_CURRENT_PLAN";
+      const status = isPlanRestricted ? "unsupported" : "error";
       await prisma.syncedTranscript.upsert({
         where: { driveFileId: file.id },
-        create: { driveFileId: file.id, driveFileName: file.name, status: "error", errorMessage: message },
-        update: { status: "error", errorMessage: message, syncedAt: new Date() },
+        create: { driveFileId: file.id, driveFileName: file.name, status, errorMessage: message },
+        update: { status, errorMessage: message, syncedAt: new Date() },
       });
     }
   }
