@@ -1,0 +1,20 @@
+name: TEMP - run diagnostic route
+
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: "Route path to call"
+        required: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: https://api-ochre-ten-68.vercel.app
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      ROUTE_PATH: ${{ inputs.path }}
+    steps:
+      - name: Call route (no -f, show status + body)
+        run: |
+          curl -s -w "\nHTTP_STATUS:%{http_code}\n" -H "Authorization: Bearer $CRON_SECRET" "$BASE_URL$ROUTE_PATH"
