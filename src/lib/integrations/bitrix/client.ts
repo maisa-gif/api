@@ -63,7 +63,10 @@ function normalizeName(value: string): string {
  * config.ts for how BITRIX_WEBHOOK_URL is obtained.
  */
 export class BitrixClient {
-  private async call<T>(method: string, params: Record<string, unknown>): Promise<T> {
+  private async callRaw<T>(
+    method: string,
+    params: Record<string, unknown>
+  ): Promise<{ result: T; next?: number }> {
     const webhookUrl = getBitrixWebhookUrl();
 
     const response = await fetch(`${webhookUrl}${method}.json`, {
@@ -73,7 +76,7 @@ export class BitrixClient {
     });
 
     const data = (await response.json().catch(() => null)) as
-      | { result: T }
+      | { result: T; next?: number }
       | { error: string; error_description?: string }
       | null;
 
@@ -85,7 +88,11 @@ export class BitrixClient {
       throw new BitrixApiError(message, response.status, data);
     }
 
-    return data.result;
+    return data;
+  }
+
+  private async call<T>(method: string, params: Record<string, unknown>): Promise<T> {
+    return (await this.callRaw<T>(method, params)).result;
   }
 
   /**
@@ -214,6 +221,30 @@ export class BitrixClient {
       order: { DATE_CREATE: "DESC" },
     });
     return deals;
+  }
+
+  /**
+   * Lists every open deal in a pipeline ("funil"), most recently created
+   * first, paginating through Bitrix's default 50-per-page result set via
+   * the `next` cursor `crm.deal.list` returns until it's exhausted.
+   */
+  async listOpenDealsByCategory(categoryId: string): Promise<BitrixDeal[]> {
+    const all: BitrixDeal[] = [];
+    let start = 0;
+
+    while (true) {
+      const page = await this.callRaw<BitrixDeal[]>("crm.deal.list", {
+        filter: { CATEGORY_ID: categoryId, CLOSED: "N" },
+        select: ["ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "CONTACT_ID", "CLOSED", "DATE_CREATE"],
+        order: { DATE_CREATE: "DESC" },
+        start,
+      });
+      all.push(...page.result);
+      if (page.next === undefined) break;
+      start = page.next;
+    }
+
+    return all;
   }
 
   /** Moves a deal to a different pipeline stage. */

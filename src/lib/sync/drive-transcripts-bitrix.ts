@@ -38,8 +38,9 @@ const EXECUTOR_ID = process.env.CLINICA_NAS_NUVENS_EXECUTOR_ID
 // Discovered via a temporary diagnostic route (crm.dealcategory.list /
 // crm.dealcategory.stage.list): the "Funil Comercial" pipeline and its
 // "Avaliação Realizada" stage, where a patient's deal should land once
-// their consultation transcript has been synced.
-const DEAL_CATEGORY_ID = "5";
+// their consultation transcript has been synced. Exported since the
+// dashboard (src/lib/dashboard/data.ts) also reads this pipeline.
+export const DEAL_CATEGORY_ID = "5";
 const DEAL_STAGE_AVALIACAO_REALIZADA = "C5:FINAL_INVOICE";
 
 // Each file needing real work (CNN lookup, Drive download, Bitrix calls)
