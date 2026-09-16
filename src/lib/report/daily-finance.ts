@@ -16,8 +16,8 @@ export async function getDailyFinanceSummary(): Promise<DailyFinanceSummary> {
     const [received, paid] = await Promise.all([getReceivedOn(date), getPaidOn(date)]);
     return {
       status: "ok",
-      totalReceived: received.reduce((sum, e) => sum + e.valor, 0),
-      totalPaid: paid.reduce((sum, e) => sum + e.valor, 0),
+      totalReceived: received.reduce((sum, e) => sum + e.pago, 0),
+      totalPaid: paid.reduce((sum, e) => sum + e.pago, 0),
     };
   } catch (err) {
     if (err instanceof ContaAzulNotConnectedError) {
