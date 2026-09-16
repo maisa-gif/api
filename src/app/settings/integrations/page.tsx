@@ -1,19 +1,24 @@
 import { listIntegrationStatuses } from "@/lib/integrations/service";
 import { getGoogleCalendarConnection } from "@/lib/integrations/google-calendar/connection";
 import { hasGoogleCalendarEnvConfig } from "@/lib/integrations/google-calendar/config";
+import { getContaAzulConnection } from "@/lib/integrations/conta-azul/connection";
+import { hasContaAzulEnvConfig } from "@/lib/integrations/conta-azul/config";
 import { IntegrationCard } from "@/components/integrations/IntegrationCard";
 import { GoogleCalendarCard } from "@/components/integrations/GoogleCalendarCard";
+import { ContaAzulCard } from "@/components/integrations/ContaAzulCard";
 
 export default async function IntegrationsSettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ google_calendar?: string }>;
+  searchParams: Promise<{ google_calendar?: string; conta_azul?: string }>;
 }) {
-  const [integrations, googleConnection, { google_calendar: googleCalendarStatus }] = await Promise.all([
-    listIntegrationStatuses(),
-    getGoogleCalendarConnection(),
-    searchParams,
-  ]);
+  const [integrations, googleConnection, contaAzulConnection, { google_calendar: googleCalendarStatus, conta_azul: contaAzulStatus }] =
+    await Promise.all([
+      listIntegrationStatuses(),
+      getGoogleCalendarConnection(),
+      getContaAzulConnection(),
+      searchParams,
+    ]);
 
   return (
     <div className="flex flex-1 flex-col items-center gap-8 bg-zinc-50 px-6 py-16 dark:bg-black">
@@ -24,6 +29,10 @@ export default async function IntegrationsSettingsPage({
       <GoogleCalendarCard
         initial={{ ...googleConnection, hasEnvCredentials: hasGoogleCalendarEnvConfig() }}
         bannerStatus={googleCalendarStatus === "connected" || googleCalendarStatus === "error" ? googleCalendarStatus : undefined}
+      />
+      <ContaAzulCard
+        initial={{ ...contaAzulConnection, hasEnvCredentials: hasContaAzulEnvConfig() }}
+        bannerStatus={contaAzulStatus === "connected" || contaAzulStatus === "error" ? contaAzulStatus : undefined}
       />
     </div>
   );
