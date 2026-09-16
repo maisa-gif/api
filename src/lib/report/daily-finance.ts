@@ -9,9 +9,7 @@ export interface DailyFinanceSummary {
   errorMessage?: string;
 }
 
-export async function getDailyFinanceSummary(): Promise<DailyFinanceSummary> {
-  const date = todayIso();
-
+export async function getDailyFinanceSummary(date: string = todayIso()): Promise<DailyFinanceSummary> {
   try {
     const [received, paid] = await Promise.all([getReceivedOn(date), getPaidOn(date)]);
     return {
