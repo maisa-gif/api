@@ -1,0 +1,92 @@
+import {
+  getSalesSheetRows,
+  GoogleSheetsApiError,
+  SalesSheetTabNotFoundError,
+  type SalesSheetRow,
+} from "@/lib/integrations/google-sheets/client";
+import { SalesSheetConfigError } from "@/lib/integrations/google-sheets/config";
+import { GoogleCalendarNotConnectedError } from "@/lib/integrations/google-calendar/connection";
+import { todayIso } from "./today";
+
+export interface DailySalesSummary {
+  status: "ok" | "not_configured" | "not_connected" | "error";
+  rows: SalesSheetRow[];
+  totalValue: number;
+  errorMessage?: string;
+}
+
+// Checked in order — "data da compra" is the sale date on the current tab
+// layout; "data" alone covers older tabs that only ever had one date
+// column. Order matters: don't match "data da cirurgia"/"data do
+// procedimento" (those are the surgery date, not the sale date).
+const DATE_HEADER_CANDIDATES = ["data da compra", "data"];
+const VALUE_HEADER_CANDIDATES = ["valor total", "preço", "preco", "valor"];
+const STATUS_HEADER_CANDIDATES = ["status"];
+const WON_STATUSES = ["ganho", "aceito"];
+
+function findHeader(headers: string[], candidates: string[]): string | undefined {
+  return candidates.find((c) => headers.includes(c));
+}
+
+/** Accepts either "YYYY-MM-DD" or "DD/MM/YYYY" and normalizes to "YYYY-MM-DD". */
+function normalizeDate(raw: string): string | null {
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+
+  const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+
+  return null;
+}
+
+/** Parses a Brazilian-formatted currency string, e.g. "R$ 16.974,00" -> 16974. */
+function parseBRLCurrency(raw: string): number {
+  const cleaned = raw.replace(/[^\d,.-]/g, "");
+  if (!cleaned) return 0;
+  const normalized = cleaned.replace(/\./g, "").replace(",", ".");
+  return Number(normalized) || 0;
+}
+
+/**
+ * Rows for today, filtered by whatever column looks like the sale date.
+ * Column names aren't hard-coded to one fixed schema — the underlying
+ * sheet has a tab per month and the columns have changed across tabs over
+ * time, so this reads the header row of the resolved range and matches
+ * known Portuguese header names instead. Adjust the *_HEADER_CANDIDATES
+ * above if a future tab renames these columns again.
+ */
+export async function getDailySalesSummary(): Promise<DailySalesSummary> {
+  try {
+    const allRows = await getSalesSheetRows();
+    if (allRows.length === 0) {
+      return { status: "ok", rows: [], totalValue: 0 };
+    }
+
+    const headers = Object.keys(allRows[0]);
+    const dateHeader = findHeader(headers, DATE_HEADER_CANDIDATES);
+    const valueHeader = findHeader(headers, VALUE_HEADER_CANDIDATES);
+    const statusHeader = findHeader(headers, STATUS_HEADER_CANDIDATES);
+
+    const today = todayIso();
+    let rows = dateHeader ? allRows.filter((row) => normalizeDate(row[dateHeader]) === today) : allRows;
+    if (statusHeader) {
+      rows = rows.filter((row) => WON_STATUSES.includes(row[statusHeader].trim().toLowerCase()));
+    }
+
+    const totalValue = valueHeader ? rows.reduce((sum, row) => sum + parseBRLCurrency(row[valueHeader]), 0) : 0;
+
+    return { status: "ok", rows, totalValue };
+  } catch (err) {
+    if (err instanceof SalesSheetConfigError) {
+      return { status: "not_configured", rows: [], totalValue: 0 };
+    }
+    if (err instanceof GoogleCalendarNotConnectedError) {
+      return { status: "not_connected", rows: [], totalValue: 0 };
+    }
+    const message =
+      err instanceof GoogleSheetsApiError || err instanceof SalesSheetTabNotFoundError
+        ? err.message
+        : "Erro ao ler a planilha de vendas";
+    return { status: "error", rows: [], totalValue: 0, errorMessage: message };
+  }
+}

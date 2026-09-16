@@ -10,6 +10,8 @@ const SCOPES = [
   // by Google Meet, not by this app, so they're outside drive.file's
   // "files the app created or the user picked" boundary.
   "https://www.googleapis.com/auth/drive.readonly",
+  // Lets /relatorio read the daily sales spreadsheet (see SALES_SHEET_ID).
+  "https://www.googleapis.com/auth/spreadsheets.readonly",
   "openid",
   "https://www.googleapis.com/auth/userinfo.email",
 ];
