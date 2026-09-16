@@ -99,6 +99,26 @@ export async function getPaidOn(date: string): Promise<ContaAzulFinancialEvent[]
   return searchPaidOn(PAYABLES_SEARCH_PATH, date);
 }
 
+/**
+ * Financial events (payable or receivable) still owed (`nao_pago > 0`) and
+ * due between `fromDate` and `toDate` inclusive (YYYY-MM-DD) — this time
+ * `data_vencimento_de`/`ate` is the real filter, not a bypass range, since
+ * "a vencer" is about the due date, not the payment date.
+ */
+async function searchDueBetween(path: string, fromDate: string, toDate: string): Promise<ContaAzulFinancialEvent[]> {
+  const params = new URLSearchParams({ data_vencimento_de: fromDate, data_vencimento_ate: toDate });
+  const events = await request(path, params);
+  return events.filter((e) => e.nao_pago > 0);
+}
+
+export async function getReceivablesDueBetween(fromDate: string, toDate: string): Promise<ContaAzulFinancialEvent[]> {
+  return searchDueBetween(RECEIVABLES_SEARCH_PATH, fromDate, toDate);
+}
+
+export async function getPayablesDueBetween(fromDate: string, toDate: string): Promise<ContaAzulFinancialEvent[]> {
+  return searchDueBetween(PAYABLES_SEARCH_PATH, fromDate, toDate);
+}
+
 async function safeReadBody(response: Response): Promise<unknown> {
   try {
     return await response.json();

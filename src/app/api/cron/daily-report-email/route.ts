@@ -1,18 +1,25 @@
 import { NextResponse } from "next/server";
 import { getDailySalesSummary, type DailySalesSummary } from "@/lib/report/daily-sales";
-import { getDailyFinanceSummary, type DailyFinanceSummary } from "@/lib/report/daily-finance";
-import { yesterdayIso } from "@/lib/report/today";
+import { getDailyFinanceSummary, getUpcomingDueSummary, type DailyFinanceSummary, type UpcomingDueSummary } from "@/lib/report/daily-finance";
+import { getDailyAgendaSummary, type DailyAgendaSummary } from "@/lib/report/daily-agenda";
+import { yesterdayIso, todayIso, todayPlusDaysIso } from "@/lib/report/today";
 import { sendGmail } from "@/lib/integrations/gmail/client";
 
 /**
  * Triggered daily at 8am (see vercel.json) — after that hour, salespeople
  * who log sales in the spreadsheet after their shift have already done so,
- * so this reports on yesterday rather than "today" (which would still be
- * empty this early). Protected the same way as the other cron routes: a
- * shared secret Vercel Cron sends automatically as
+ * so sales/financial figures report on yesterday rather than "today"
+ * (which would still be empty this early). Protected the same way as the
+ * other cron routes: a shared secret Vercel Cron sends automatically as
  * `Authorization: Bearer $CRON_SECRET`.
+ *
+ * Mirrors the "Bússola da Diretoria" daily routine, but only the sections
+ * that have an actual data source wired up (vendas, financeiro, agenda).
+ * Enfermagem, RH and the "resumo dos líderes" have no system behind them —
+ * those stay as plain reminders in the email, not fabricated numbers.
  */
 export const maxDuration = 30;
+const UPCOMING_DUE_WINDOW_DAYS = 7;
 
 function formatCurrency(value: number): string {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -41,12 +48,51 @@ function financeLine(finance: DailyFinanceSummary): string {
   return `Erro ao consultar a Conta Azul: ${finance.errorMessage}`;
 }
 
-function buildEmailHtml(date: string, sales: DailySalesSummary, finance: DailyFinanceSummary): string {
+function upcomingDueLine(due: UpcomingDueSummary): string {
+  if (due.status === "ok") {
+    return `A receber: ${formatCurrency(due.toReceive)} · A pagar: ${formatCurrency(due.toPay)}`;
+  }
+  if (due.status === "not_connected") return "Conta Azul não conectada.";
+  return `Erro ao consultar a Conta Azul: ${due.errorMessage}`;
+}
+
+function agendaLine(agenda: DailyAgendaSummary): string {
+  if (agenda.status === "ok") {
+    return `${agenda.appointmentCount} agendamento${agenda.appointmentCount === 1 ? "" : "s"} hoje`;
+  }
+  if (agenda.status === "not_connected") return "Clínica nas Nuvens não conectada.";
+  return `Erro ao consultar a agenda: ${agenda.errorMessage}`;
+}
+
+function buildEmailHtml(
+  yesterday: string,
+  sales: DailySalesSummary,
+  finance: DailyFinanceSummary,
+  due: UpcomingDueSummary,
+  agenda: DailyAgendaSummary
+): string {
   return `
-    <div style="font-family: sans-serif; max-width: 480px;">
-      <h2>Relatório de ${formatDateBR(date)}</h2>
-      <p><strong>Vendas:</strong> ${salesLine(sales)}</p>
-      <p><strong>Financeiro (Conta Azul):</strong> ${financeLine(finance)}</p>
+    <div style="font-family: sans-serif; max-width: 520px;">
+      <h2>Relatório de ${formatDateBR(yesterday)}</h2>
+
+      <h3>Vendas (ontem)</h3>
+      <p>${salesLine(sales)}</p>
+
+      <h3>Financeiro (Conta Azul)</h3>
+      <p><strong>Ontem:</strong> ${financeLine(finance)}</p>
+      <p><strong>A vencer nos próximos ${UPCOMING_DUE_WINDOW_DAYS} dias:</strong> ${upcomingDueLine(due)}</p>
+
+      <h3>Recepção &amp; agenda (hoje)</h3>
+      <p>${agendaLine(agenda)}</p>
+
+      <h3>Enfermagem</h3>
+      <p style="color:#92400e;">Sem integração ainda — pedir para Amanda RT: procedimentos realizados, intercorrências, insumos críticos de sala.</p>
+
+      <h3>RH &amp; equipe</h3>
+      <p style="color:#92400e;">Sem integração ainda — pedir para cada líder: faltas do dia, escala coberta.</p>
+
+      <h3>Resumo dos líderes</h3>
+      <p style="color:#92400e;">Cobrar de Silas, Paulo e Amanda RT o resumo curto e padronizado do dia.</p>
     </div>
   `;
 }
@@ -67,14 +113,23 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "REPORT_EMAIL_TO is not configured" }, { status: 500 });
   }
 
-  const date = yesterdayIso();
-  const [sales, finance] = await Promise.all([getDailySalesSummary(date), getDailyFinanceSummary(date)]);
+  const yesterday = yesterdayIso();
+  const [sales, finance, due, agenda] = await Promise.all([
+    getDailySalesSummary(yesterday),
+    getDailyFinanceSummary(yesterday),
+    getUpcomingDueSummary(todayIso(), todayPlusDaysIso(UPCOMING_DUE_WINDOW_DAYS)),
+    getDailyAgendaSummary(),
+  ]);
 
   try {
-    await sendGmail({ to, subject: `Relatório do dia — ${formatDateBR(date)}`, html: buildEmailHtml(date, sales, finance) });
+    await sendGmail({
+      to,
+      subject: `Relatório do dia — ${formatDateBR(yesterday)}`,
+      html: buildEmailHtml(yesterday, sales, finance, due, agenda),
+    });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed to send email" }, { status: 502 });
   }
 
-  return NextResponse.json({ ok: true, date });
+  return NextResponse.json({ ok: true, date: yesterday });
 }

@@ -17,3 +17,8 @@ export function todayIso(): string {
 export function yesterdayIso(): string {
   return formatIso(new Date(Date.now() - 24 * 60 * 60 * 1000));
 }
+
+/** Today plus `days` (can be negative), as YYYY-MM-DD in the app's configured timezone. */
+export function todayPlusDaysIso(days: number): string {
+  return formatIso(new Date(Date.now() + days * 24 * 60 * 60 * 1000));
+}
