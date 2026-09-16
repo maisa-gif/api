@@ -56,10 +56,11 @@ async function listSheetTitles(spreadsheetId: string): Promise<string[]> {
   });
 
   if (!response.ok) {
+    const body = await safeReadBody(response);
     throw new GoogleSheetsApiError(
-      "Failed to list sales spreadsheet tabs",
+      `Failed to list sales spreadsheet tabs: ${describeApiError(response.status, body)}`,
       response.status,
-      await safeReadBody(response)
+      body
     );
   }
 
@@ -104,7 +105,12 @@ export async function getSalesSheetRows(): Promise<SalesSheetRow[]> {
   });
 
   if (!response.ok) {
-    throw new GoogleSheetsApiError("Failed to read the sales sheet", response.status, await safeReadBody(response));
+    const body = await safeReadBody(response);
+    throw new GoogleSheetsApiError(
+      `Failed to read the sales sheet: ${describeApiError(response.status, body)}`,
+      response.status,
+      body
+    );
   }
 
   const data = (await response.json()) as { values?: unknown[][] };
@@ -130,4 +136,13 @@ async function safeReadBody(response: Response): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+/** Surfaces the Google API's own error message when present, so the report page shows something actionable (permission denied, sheet not found, API not enabled, ...) instead of a bare status code. */
+function describeApiError(status: number, body: unknown): string {
+  if (body && typeof body === "object" && "error" in body) {
+    const error = (body as { error?: { message?: string } }).error;
+    if (error?.message) return `HTTP ${status} — ${error.message}`;
+  }
+  return `HTTP ${status}`;
 }
