@@ -56,13 +56,23 @@ function upcomingDueLine(due: UpcomingDueSummary): string {
   return `Erro ao consultar a Conta Azul: ${due.errorMessage}`;
 }
 
-function agendaLine(agenda: DailyAgendaSummary): string {
-  if (agenda.status === "ok") {
-    const count = `${agenda.appointmentCount} agendamento${agenda.appointmentCount === 1 ? "" : "s"}`;
-    return `${count} — ${agenda.noShowCount} no-show, ${agenda.cancelledCount} cancelamento${agenda.cancelledCount === 1 ? "" : "s"}`;
-  }
-  if (agenda.status === "not_connected") return "Clínica nas Nuvens não conectada.";
-  return `Erro ao consultar a agenda: ${agenda.errorMessage}`;
+function agendaSection(agenda: DailyAgendaSummary): string {
+  if (agenda.status === "not_connected") return "<p>Clínica nas Nuvens não conectada.</p>";
+  if (agenda.status === "error") return `<p>Erro ao consultar a agenda: ${agenda.errorMessage}</p>`;
+
+  const total = `${agenda.appointmentCount} agendamento${agenda.appointmentCount === 1 ? "" : "s"}`;
+  const totalsLine = `<p>${total} — ${agenda.noShowCount} no-show, ${agenda.cancelledCount} cancelamento${agenda.cancelledCount === 1 ? "" : "s"}</p>`;
+
+  if (agenda.byProfessional.length === 0) return totalsLine;
+
+  const rows = agenda.byProfessional
+    .map(
+      (p) =>
+        `<tr><td style="padding:2px 12px 2px 0;">${p.name}</td><td style="padding:2px 12px;">${p.appointmentCount} agend.</td><td style="padding:2px 12px;">${p.noShowCount} no-show</td><td style="padding:2px 0;">${p.cancelledCount} cancel.</td></tr>`
+    )
+    .join("");
+
+  return `${totalsLine}<table style="border-collapse:collapse; font-size:14px;">${rows}</table>`;
 }
 
 function buildEmailHtml(
@@ -84,7 +94,7 @@ function buildEmailHtml(
       <p><strong>A vencer (${formatDateBR(yesterday)} a ${UPCOMING_DUE_WINDOW_DAYS} dias depois):</strong> ${upcomingDueLine(due)}</p>
 
       <h3>Recepção &amp; agenda (ontem)</h3>
-      <p>${agendaLine(agenda)}</p>
+      ${agendaSection(agenda)}
 
       <h3>Enfermagem</h3>
       <p style="color:#92400e;">Sem integração ainda — pedir para Amanda RT: procedimentos realizados, intercorrências, insumos críticos de sala.</p>

@@ -17,6 +17,7 @@ import { getClinicaNasNuvensEnvConfig } from "./config";
 const CID_HEADER = "clinicaNasNuvens-cid";
 const AGENDA_LISTA_PATH = "/agenda/lista";
 const AGENDA_RESUMIDA_PATH = (id: number) => `/agenda/${id}/resumida`;
+const EXECUTOR_AGENDA_LISTA_PATH = "/executor-agenda/lista";
 // Server-observed max in testing; loop pages beyond this if totalPaginas > 1.
 const PAGE_SIZE = 200;
 
@@ -50,6 +51,26 @@ interface ClinicaNasNuvensAgendaListaResponse {
   pagina: number;
   totalPaginas: number;
   lista: ClinicaNasNuvensAppointment[];
+}
+
+/**
+ * Shape of an item in GET /executor-agenda/lista's `lista` array. `idpessoa`
+ * (not `id`, which is the executor-agenda record id) is what appointments'
+ * `idPessoaExecutor` refers to — confirmed via a temporary diagnostic route
+ * against a real account.
+ */
+export interface ClinicaNasNuvensExecutor {
+  id: number;
+  idpessoa: number;
+  nome: string;
+  ativo: boolean;
+  tipoExecutor: string;
+}
+
+interface ClinicaNasNuvensExecutorListaResponse {
+  pagina: number;
+  totalPaginas: number;
+  lista: ClinicaNasNuvensExecutor[];
 }
 
 /** Shape of GET /agenda/{id}/resumida — has the patient name, unlike /agenda/lista. */
@@ -148,6 +169,25 @@ export class ClinicaNasNuvensClient {
   /** Fetches the patient name + a condensed status for a single appointment. */
   async getAppointmentSummary(id: number): Promise<ClinicaNasNuvensAppointmentSummary> {
     return this.request<ClinicaNasNuvensAppointmentSummary>(AGENDA_RESUMIDA_PATH(id));
+  }
+
+  /** Lists every professional/executor (active or not), paginating through all pages. */
+  async listExecutors(): Promise<ClinicaNasNuvensExecutor[]> {
+    const all: ClinicaNasNuvensExecutor[] = [];
+    let pagina = 0;
+    let totalPaginas = 1;
+
+    do {
+      const params = new URLSearchParams({ pagina: String(pagina), registrosPorPagina: String(PAGE_SIZE) });
+      const page = await this.request<ClinicaNasNuvensExecutorListaResponse>(
+        `${EXECUTOR_AGENDA_LISTA_PATH}?${params.toString()}`
+      );
+      all.push(...page.lista);
+      totalPaginas = page.totalPaginas;
+      pagina += 1;
+    } while (pagina < totalPaginas);
+
+    return all;
   }
 
   /** Sanity-checks the credentials + cid by making a lightweight call. */
