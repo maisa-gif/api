@@ -2,22 +2,31 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { getContaAzulEnvConfig } from "./config";
 
 /**
- * Conta Azul's OAuth server (auth.contaazul.com) follows the same
- * /oauth2/authorize + /oauth2/token shape as an AWS Cognito hosted UI.
- * Confirmed against https://developers.contaazul.com/auth and
- * https://developers.contaazul.com/requestingcode via search (the docs
- * site itself is blocked by this environment's network egress proxy, so
- * these were not verified against the live Swagger/OpenAPI spec). Recheck
- * the "Credenciais" step in the developer portal once an app is
- * registered — in particular the exact `scope` value, which is
- * app-specific and not confirmed here.
+ * Conta Azul's OAuth flow is a Cognito user pool behind a custom login UI.
+ * Confirmed live from a real dev app's "Testando a autenticação com OAuth
+ * 2.0" step in the developer portal (developers.contaazul.com is blocked
+ * by this environment's network egress, so this couldn't be checked
+ * against the OpenAPI spec directly):
+ *
+ *   https://login.contaazul.com/#/oauth/authorize?response_type=code
+ *     &client_id=...&redirect_uri=...&state=...
+ *     &scope=openid+profile+aws.cognito.signin.user.admin
+ *
+ * The token endpoint below (auth.contaazul.com/oauth2/token, Cognito's
+ * standard token path) was NOT shown by that wizard step and is still
+ * unconfirmed — verify it against the next step of the same wizard
+ * ("Trocar o código por tokens") before relying on this in production.
+ *
+ * Important: a *development* app's redirect_uri is fixed to
+ * https://contaazul.com (not configurable) — it's only good for manually
+ * exercising the API, not for this app's real OAuth callback. A
+ * *production* app (requested separately in the developer portal) is
+ * needed to register {APP_URL}/api/integrations/conta-azul/callback as
+ * the redirect_uri.
  */
-const AUTH_ENDPOINT = "https://auth.contaazul.com/oauth2/authorize";
+const AUTH_ENDPOINT = "https://login.contaazul.com/#/oauth/authorize";
 const TOKEN_ENDPOINT = "https://auth.contaazul.com/oauth2/token";
-// TODO: confirm the exact scope string(s) required for financial (contas a
-// pagar/receber) read access in the developer portal — "openid" alone may
-// not be enough to call the financial APIs.
-const SCOPES = ["openid"];
+const SCOPES = ["openid", "profile", "aws.cognito.signin.user.admin"];
 const STATE_TTL_MS = 10 * 60 * 1000;
 
 export interface ContaAzulTokens {
