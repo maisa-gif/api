@@ -71,24 +71,28 @@ async function listSheetTitles(spreadsheetId: string): Promise<string[]> {
 export class SalesSheetTabNotFoundError extends Error {}
 
 /**
- * The sales sheet has one tab per month (e.g. "Setembro"), so "today's"
+ * The sales sheet has one tab per month (e.g. "Setembro"), so the target
  * tab has to be re-resolved on every call rather than fixed once in
  * config — otherwise the report would keep reading last month's tab after
  * the month rolls over. SALES_SHEET_RANGE overrides this when set.
+ *
+ * `referenceDate` picks which month's tab to read — the 8am report email
+ * reports on yesterday, so on the 1st of the month it needs last month's
+ * tab, not the new (probably still-empty) one `new Date()` would resolve to.
  */
-async function resolveSalesRange(): Promise<{ spreadsheetId: string; range: string }> {
+async function resolveSalesRange(referenceDate: Date): Promise<{ spreadsheetId: string; range: string }> {
   const { spreadsheetId, rangeOverride } = getSalesSheetConfig();
   if (rangeOverride) {
     return { spreadsheetId, range: rangeOverride };
   }
 
-  const currentMonthName = PORTUGUESE_MONTHS[new Date().getMonth()];
+  const monthName = PORTUGUESE_MONTHS[referenceDate.getMonth()];
   const titles = await listSheetTitles(spreadsheetId);
-  const match = titles.find((title) => normalizeForMatch(title) === normalizeForMatch(currentMonthName));
+  const match = titles.find((title) => normalizeForMatch(title) === normalizeForMatch(monthName));
 
   if (!match) {
     throw new SalesSheetTabNotFoundError(
-      `No tab named "${currentMonthName}" found in the sales spreadsheet (tabs: ${titles.join(", ")}). ` +
+      `No tab named "${monthName}" found in the sales spreadsheet (tabs: ${titles.join(", ")}). ` +
         "Set SALES_SHEET_RANGE to override auto-detection."
     );
   }
@@ -96,9 +100,9 @@ async function resolveSalesRange(): Promise<{ spreadsheetId: string; range: stri
   return { spreadsheetId, range: `${match}!A:Z` };
 }
 
-/** Reads the resolved sales sheet range and returns rows keyed by header. */
-export async function getSalesSheetRows(): Promise<SalesSheetRow[]> {
-  const { spreadsheetId, range } = await resolveSalesRange();
+/** Reads the sales sheet tab matching `referenceDate`'s month and returns rows keyed by header. */
+export async function getSalesSheetRows(referenceDate: Date = new Date()): Promise<SalesSheetRow[]> {
+  const { spreadsheetId, range } = await resolveSalesRange(referenceDate);
 
   const response = await fetch(`${API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`, {
     headers: await authHeader(),

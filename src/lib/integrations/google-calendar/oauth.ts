@@ -12,6 +12,8 @@ const SCOPES = [
   "https://www.googleapis.com/auth/drive.readonly",
   // Lets /relatorio read the daily sales spreadsheet (see SALES_SHEET_ID).
   "https://www.googleapis.com/auth/spreadsheets.readonly",
+  // Lets the daily-report-email cron send the report from this account.
+  "https://www.googleapis.com/auth/gmail.send",
   "openid",
   "https://www.googleapis.com/auth/userinfo.email",
 ];

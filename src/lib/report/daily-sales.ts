@@ -48,16 +48,18 @@ function parseBRLCurrency(raw: string): number {
 }
 
 /**
- * Rows for today, filtered by whatever column looks like the sale date.
- * Column names aren't hard-coded to one fixed schema — the underlying
- * sheet has a tab per month and the columns have changed across tabs over
- * time, so this reads the header row of the resolved range and matches
- * known Portuguese header names instead. Adjust the *_HEADER_CANDIDATES
- * above if a future tab renames these columns again.
+ * Rows for `date` (YYYY-MM-DD, defaults to today), filtered by whatever
+ * column looks like the sale date. Column names aren't hard-coded to one
+ * fixed schema — the underlying sheet has a tab per month and the columns
+ * have changed across tabs over time, so this reads the header row of the
+ * resolved range and matches known Portuguese header names instead. Adjust
+ * the *_HEADER_CANDIDATES above if a future tab renames these columns again.
  */
-export async function getDailySalesSummary(): Promise<DailySalesSummary> {
+export async function getDailySalesSummary(date: string = todayIso()): Promise<DailySalesSummary> {
   try {
-    const allRows = await getSalesSheetRows();
+    // Noon avoids any midnight/timezone rounding landing on the wrong
+    // month when resolving which sheet tab to read.
+    const allRows = await getSalesSheetRows(new Date(`${date}T12:00:00`));
     if (allRows.length === 0) {
       return { status: "ok", rows: [], totalValue: 0 };
     }
@@ -67,8 +69,7 @@ export async function getDailySalesSummary(): Promise<DailySalesSummary> {
     const valueHeader = findHeader(headers, VALUE_HEADER_CANDIDATES);
     const statusHeader = findHeader(headers, STATUS_HEADER_CANDIDATES);
 
-    const today = todayIso();
-    let rows = dateHeader ? allRows.filter((row) => normalizeDate(row[dateHeader]) === today) : allRows;
+    let rows = dateHeader ? allRows.filter((row) => normalizeDate(row[dateHeader]) === date) : allRows;
     if (statusHeader) {
       rows = rows.filter((row) => WON_STATUSES.includes(row[statusHeader].trim().toLowerCase()));
     }
