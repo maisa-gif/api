@@ -12,10 +12,12 @@ import { getContaAzulEnvConfig } from "./config";
  *     &client_id=...&redirect_uri=...&state=...
  *     &scope=openid+profile+aws.cognito.signin.user.admin
  *
- * The token endpoint below (auth.contaazul.com/oauth2/token, Cognito's
- * standard token path) was NOT shown by that wizard step and is still
- * unconfirmed — verify it against the next step of the same wizard
- * ("Trocar o código por tokens") before relying on this in production.
+ * The token endpoint is api-v2.contaazul.com/oauth/token (same host as
+ * the financial API, not the Cognito-style auth.contaazul.com/oauth2/token
+ * originally guessed) — confirmed from the wizard's "Trocar o Código de
+ * Autorização por Tokens" step, including its example curl using HTTP
+ * Basic auth (client_id:client_secret) and
+ * `application/x-www-form-urlencoded`, matching what's implemented below.
  *
  * Important: a *development* app's redirect_uri is fixed to
  * https://contaazul.com (not configurable) — it's only good for manually
@@ -25,7 +27,7 @@ import { getContaAzulEnvConfig } from "./config";
  * the redirect_uri.
  */
 const AUTH_ENDPOINT = "https://login.contaazul.com/#/oauth/authorize";
-const TOKEN_ENDPOINT = "https://auth.contaazul.com/oauth2/token";
+const TOKEN_ENDPOINT = "https://api-v2.contaazul.com/oauth/token";
 const SCOPES = ["openid", "profile", "aws.cognito.signin.user.admin"];
 const STATE_TTL_MS = 10 * 60 * 1000;
 
