@@ -58,7 +58,8 @@ function upcomingDueLine(due: UpcomingDueSummary): string {
 
 function agendaLine(agenda: DailyAgendaSummary): string {
   if (agenda.status === "ok") {
-    return `${agenda.appointmentCount} agendamento${agenda.appointmentCount === 1 ? "" : "s"} hoje`;
+    const count = `${agenda.appointmentCount} agendamento${agenda.appointmentCount === 1 ? "" : "s"} hoje`;
+    return `${count} — ${agenda.noShowCount} no-show, ${agenda.cancelledCount} cancelamento${agenda.cancelledCount === 1 ? "" : "s"}`;
   }
   if (agenda.status === "not_connected") return "Clínica nas Nuvens não conectada.";
   return `Erro ao consultar a agenda: ${agenda.errorMessage}`;
