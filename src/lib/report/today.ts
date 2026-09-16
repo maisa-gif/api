@@ -22,3 +22,13 @@ export function yesterdayIso(): string {
 export function todayPlusDaysIso(days: number): string {
   return formatIso(new Date(Date.now() + days * 24 * 60 * 60 * 1000));
 }
+
+/**
+ * `iso` (YYYY-MM-DD) plus `days` (can be negative), as YYYY-MM-DD. Anchors
+ * to noon UTC before shifting so the result doesn't depend on the
+ * server's own local timezone, only on TIME_ZONE.
+ */
+export function isoPlusDays(iso: string, days: number): string {
+  const noonUtc = new Date(`${iso}T12:00:00Z`);
+  return formatIso(new Date(noonUtc.getTime() + days * 24 * 60 * 60 * 1000));
+}

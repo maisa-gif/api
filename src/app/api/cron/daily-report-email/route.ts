@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getDailySalesSummary, type DailySalesSummary } from "@/lib/report/daily-sales";
 import { getDailyFinanceSummary, getUpcomingDueSummary, type DailyFinanceSummary, type UpcomingDueSummary } from "@/lib/report/daily-finance";
 import { getDailyAgendaSummary, type DailyAgendaSummary } from "@/lib/report/daily-agenda";
-import { yesterdayIso, todayIso, todayPlusDaysIso } from "@/lib/report/today";
+import { yesterdayIso, isoPlusDays } from "@/lib/report/today";
 import { sendGmail } from "@/lib/integrations/gmail/client";
 
 /**
@@ -58,7 +58,7 @@ function upcomingDueLine(due: UpcomingDueSummary): string {
 
 function agendaLine(agenda: DailyAgendaSummary): string {
   if (agenda.status === "ok") {
-    const count = `${agenda.appointmentCount} agendamento${agenda.appointmentCount === 1 ? "" : "s"} hoje`;
+    const count = `${agenda.appointmentCount} agendamento${agenda.appointmentCount === 1 ? "" : "s"}`;
     return `${count} — ${agenda.noShowCount} no-show, ${agenda.cancelledCount} cancelamento${agenda.cancelledCount === 1 ? "" : "s"}`;
   }
   if (agenda.status === "not_connected") return "Clínica nas Nuvens não conectada.";
@@ -81,9 +81,9 @@ function buildEmailHtml(
 
       <h3>Financeiro (Conta Azul)</h3>
       <p><strong>Ontem:</strong> ${financeLine(finance)}</p>
-      <p><strong>A vencer nos próximos ${UPCOMING_DUE_WINDOW_DAYS} dias:</strong> ${upcomingDueLine(due)}</p>
+      <p><strong>A vencer (${formatDateBR(yesterday)} a ${UPCOMING_DUE_WINDOW_DAYS} dias depois):</strong> ${upcomingDueLine(due)}</p>
 
-      <h3>Recepção &amp; agenda (hoje)</h3>
+      <h3>Recepção &amp; agenda (ontem)</h3>
       <p>${agendaLine(agenda)}</p>
 
       <h3>Enfermagem</h3>
@@ -118,8 +118,8 @@ export async function GET(request: Request) {
   const [sales, finance, due, agenda] = await Promise.all([
     getDailySalesSummary(yesterday),
     getDailyFinanceSummary(yesterday),
-    getUpcomingDueSummary(todayIso(), todayPlusDaysIso(UPCOMING_DUE_WINDOW_DAYS)),
-    getDailyAgendaSummary(),
+    getUpcomingDueSummary(yesterday, isoPlusDays(yesterday, UPCOMING_DUE_WINDOW_DAYS)),
+    getDailyAgendaSummary(yesterday),
   ]);
 
   try {
