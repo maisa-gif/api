@@ -80,10 +80,12 @@ async function listSheetInfos(spreadsheetId: string): Promise<SheetInfo[]> {
 export class SalesSheetTabNotFoundError extends Error {}
 
 /**
- * The sales sheet has one tab per month (e.g. "Setembro"), so the target
- * tab has to be re-resolved on every call rather than fixed once in
- * config — otherwise the report would keep reading last month's tab after
- * the month rolls over. SALES_SHEET_RANGE overrides this when set.
+ * The sales sheet has one tab per month (e.g. "Setembro", or now "Setembro
+ * 2026" — tabs have been getting the year appended to disambiguate as the
+ * workbook cycles past a year), so the target tab has to be re-resolved on
+ * every call rather than fixed once in config — otherwise the report would
+ * keep reading last month's tab after the month rolls over.
+ * SALES_SHEET_RANGE overrides this when set.
  *
  * `referenceDate` picks which month's tab to read — the 8am report email
  * reports on yesterday, so on the 1st of the month it needs last month's
@@ -95,20 +97,24 @@ async function resolveSalesRange(referenceDate: Date): Promise<{ spreadsheetId: 
     return { spreadsheetId, range: rangeOverride };
   }
 
-  const monthName = PORTUGUESE_MONTHS[referenceDate.getMonth()];
+  const monthDisplayName = PORTUGUESE_MONTHS[referenceDate.getMonth()];
+  const monthName = normalizeForMatch(monthDisplayName);
+  const year = String(referenceDate.getFullYear());
   const sheets = await listSheetInfos(spreadsheetId);
-  // Tab names don't include a year (just "Setembro", not "Setembro 2026"),
-  // and the workbook has now cycled past a full year, so there can be more
-  // than one tab with the same month name (e.g. Setembro 2025 AND Setembro
-  // 2026) — confirmed live. Pick the one with the highest explicit `index`
-  // (visual left-to-right position), i.e. the rightmost/newest tab, instead
-  // of assuming anything about the order the API returns them in.
-  const candidates = sheets.filter((s) => normalizeForMatch(s.title) === normalizeForMatch(monthName));
-  const match = candidates.sort((a, b) => b.index - a.index)[0];
+  // Match by substring, not equality, so both the legacy "Setembro" tabs
+  // and newer "Setembro 2026"-style ones (renamed to disambiguate once the
+  // workbook cycled past a year) are found. Some month tabs may still lack
+  // a year — confirmed live that mixing bare and year-suffixed tab names
+  // happens mid-transition — so among candidates, prefer one whose title
+  // mentions the target year; only fall back to the highest `index`
+  // (rightmost/newest tab) when no candidate names a year at all.
+  const candidates = sheets.filter((s) => normalizeForMatch(s.title).includes(monthName));
+  const withYear = candidates.filter((s) => s.title.includes(year));
+  const match = (withYear.length > 0 ? withYear : candidates).sort((a, b) => b.index - a.index)[0];
 
   if (!match) {
     throw new SalesSheetTabNotFoundError(
-      `No tab named "${monthName}" found in the sales spreadsheet (tabs: ${sheets.map((s) => s.title).join(", ")}). ` +
+      `No tab named "${monthDisplayName}" found in the sales spreadsheet (tabs: ${sheets.map((s) => s.title).join(", ")}). ` +
         "Set SALES_SHEET_RANGE to override auto-detection."
     );
   }
