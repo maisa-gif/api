@@ -52,6 +52,15 @@ export default async function RelatorioPage() {
               {sales.rows.length} venda{sales.rows.length === 1 ? "" : "s"} hoje
               {sales.totalValue > 0 ? ` — ${formatCurrency(sales.totalValue)}` : ""}
             </p>
+            {sales.byProduct.length > 0 && (
+              <ul className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
+                {sales.byProduct.map((p) => (
+                  <li key={p.product}>
+                    {p.product}: {p.count} venda{p.count === 1 ? "" : "s"} — {formatCurrency(p.totalValue)}
+                  </li>
+                ))}
+              </ul>
+            )}
             {sales.rows.length > 0 && (
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full text-left text-sm">
