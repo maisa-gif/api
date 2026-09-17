@@ -30,14 +30,24 @@ function formatDateBR(iso: string): string {
   return `${day}/${month}/${year}`;
 }
 
-function salesLine(sales: DailySalesSummary): string {
-  if (sales.status === "ok") {
-    const count = `${sales.rows.length} venda${sales.rows.length === 1 ? "" : "s"}`;
-    return sales.totalValue > 0 ? `${count} — ${formatCurrency(sales.totalValue)}` : count;
-  }
-  if (sales.status === "not_configured") return "Planilha de vendas não configurada (SALES_SHEET_ID).";
-  if (sales.status === "not_connected") return "Google não conectado — conecte em /settings/integrations.";
-  return `Erro ao ler a planilha: ${sales.errorMessage}`;
+function salesSection(sales: DailySalesSummary): string {
+  if (sales.status === "not_configured") return "<p>Planilha de vendas não configurada (SALES_SHEET_ID).</p>";
+  if (sales.status === "not_connected") return "<p>Google não conectado — conecte em /settings/integrations.</p>";
+  if (sales.status === "error") return `<p>Erro ao ler a planilha: ${sales.errorMessage}</p>`;
+
+  const count = `${sales.rows.length} venda${sales.rows.length === 1 ? "" : "s"}`;
+  const totalsLine = `<p>${sales.totalValue > 0 ? `${count} — ${formatCurrency(sales.totalValue)}` : count}</p>`;
+
+  if (sales.byProduct.length === 0) return totalsLine;
+
+  const rows = sales.byProduct
+    .map(
+      (p) =>
+        `<tr><td style="padding:2px 12px 2px 0;">${p.product}</td><td style="padding:2px 12px;">${p.count} venda${p.count === 1 ? "" : "s"}</td><td style="padding:2px 0;">${formatCurrency(p.totalValue)}</td></tr>`
+    )
+    .join("");
+
+  return `${totalsLine}<table style="border-collapse:collapse; font-size:14px;">${rows}</table>`;
 }
 
 function financeLine(finance: DailyFinanceSummary): string {
@@ -87,7 +97,7 @@ function buildEmailHtml(
       <h2>Relatório de ${formatDateBR(yesterday)}</h2>
 
       <h3>Vendas (ontem)</h3>
-      <p>${salesLine(sales)}</p>
+      ${salesSection(sales)}
 
       <h3>Financeiro (Conta Azul)</h3>
       <p><strong>Ontem:</strong> ${financeLine(finance)}</p>
