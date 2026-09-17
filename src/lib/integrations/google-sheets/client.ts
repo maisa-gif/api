@@ -89,7 +89,14 @@ async function resolveSalesRange(referenceDate: Date): Promise<{ spreadsheetId: 
 
   const monthName = PORTUGUESE_MONTHS[referenceDate.getMonth()];
   const titles = await listSheetTitles(spreadsheetId);
-  const match = titles.find((title) => normalizeForMatch(title) === normalizeForMatch(monthName));
+  // Tab names don't include a year (just "Setembro", not "Setembro 2026"),
+  // and the workbook has now cycled past a full year, so there can be more
+  // than one tab with the same month name (e.g. Setembro 2025 AND Setembro
+  // 2026) — confirmed live, this was silently reading the 2025 one and
+  // reporting 0 sales every day since. Sheets API returns tabs in their
+  // left-to-right visual order, which in this workbook is chronological, so
+  // the *last* match is the newest one.
+  const match = titles.findLast((title) => normalizeForMatch(title) === normalizeForMatch(monthName));
 
   if (!match) {
     throw new SalesSheetTabNotFoundError(
