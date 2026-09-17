@@ -53,6 +53,7 @@ async function authHeader(): Promise<Record<string, string>> {
 async function listSheetTitles(spreadsheetId: string): Promise<string[]> {
   const response = await fetch(`${API_BASE}/${spreadsheetId}?fields=sheets.properties.title`, {
     headers: await authHeader(),
+    cache: "no-store",
   });
 
   if (!response.ok) {
@@ -106,6 +107,7 @@ export async function getSalesSheetRows(referenceDate: Date = new Date()): Promi
 
   const response = await fetch(`${API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`, {
     headers: await authHeader(),
+    cache: "no-store",
   });
 
   if (!response.ok) {
