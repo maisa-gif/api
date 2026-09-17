@@ -118,6 +118,7 @@ export class ClinicaNasNuvensClient {
         Authorization: `Basic ${basicAuth}`,
         [CID_HEADER]: this.cid,
       },
+      cache: "no-store",
     });
 
     if (!response.ok) {

@@ -71,6 +71,7 @@ async function request(path: string, params: URLSearchParams): Promise<ContaAzul
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
     },
+    cache: "no-store",
   });
 
   if (!response.ok) {
