@@ -50,8 +50,14 @@ async function authHeader(): Promise<Record<string, string>> {
   return { Authorization: `Bearer ${accessToken}` };
 }
 
-async function listSheetTitles(spreadsheetId: string): Promise<string[]> {
-  const response = await fetch(`${API_BASE}/${spreadsheetId}?fields=sheets.properties.title`, {
+interface SheetInfo {
+  title: string;
+  /** Explicit visual tab position (0-based, left to right) — not assumed from array order. */
+  index: number;
+}
+
+async function listSheetInfos(spreadsheetId: string): Promise<SheetInfo[]> {
+  const response = await fetch(`${API_BASE}/${spreadsheetId}?fields=sheets.properties(title,index)`, {
     headers: await authHeader(),
     cache: "no-store",
   });
@@ -65,8 +71,10 @@ async function listSheetTitles(spreadsheetId: string): Promise<string[]> {
     );
   }
 
-  const data = (await response.json()) as { sheets?: { properties?: { title?: string } }[] };
-  return (data.sheets ?? []).map((s) => s.properties?.title).filter((t): t is string => Boolean(t));
+  const data = (await response.json()) as { sheets?: { properties?: { title?: string; index?: number } }[] };
+  return (data.sheets ?? [])
+    .map((s) => (s.properties?.title !== undefined && s.properties?.index !== undefined ? { title: s.properties.title, index: s.properties.index } : null))
+    .filter((s): s is SheetInfo => s !== null);
 }
 
 export class SalesSheetTabNotFoundError extends Error {}
@@ -88,24 +96,24 @@ async function resolveSalesRange(referenceDate: Date): Promise<{ spreadsheetId: 
   }
 
   const monthName = PORTUGUESE_MONTHS[referenceDate.getMonth()];
-  const titles = await listSheetTitles(spreadsheetId);
+  const sheets = await listSheetInfos(spreadsheetId);
   // Tab names don't include a year (just "Setembro", not "Setembro 2026"),
   // and the workbook has now cycled past a full year, so there can be more
   // than one tab with the same month name (e.g. Setembro 2025 AND Setembro
-  // 2026) — confirmed live, this was silently reading the 2025 one and
-  // reporting 0 sales every day since. Sheets API returns tabs in their
-  // left-to-right visual order, which in this workbook is chronological, so
-  // the *last* match is the newest one.
-  const match = titles.findLast((title) => normalizeForMatch(title) === normalizeForMatch(monthName));
+  // 2026) — confirmed live. Pick the one with the highest explicit `index`
+  // (visual left-to-right position), i.e. the rightmost/newest tab, instead
+  // of assuming anything about the order the API returns them in.
+  const candidates = sheets.filter((s) => normalizeForMatch(s.title) === normalizeForMatch(monthName));
+  const match = candidates.sort((a, b) => b.index - a.index)[0];
 
   if (!match) {
     throw new SalesSheetTabNotFoundError(
-      `No tab named "${monthName}" found in the sales spreadsheet (tabs: ${titles.join(", ")}). ` +
+      `No tab named "${monthName}" found in the sales spreadsheet (tabs: ${sheets.map((s) => s.title).join(", ")}). ` +
         "Set SALES_SHEET_RANGE to override auto-detection."
     );
   }
 
-  return { spreadsheetId, range: `${match}!A:Z` };
+  return { spreadsheetId, range: `${match.title}!A:Z` };
 }
 
 /** Reads the sales sheet tab matching `referenceDate`'s month and returns rows keyed by header. */
