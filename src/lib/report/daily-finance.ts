@@ -3,10 +3,21 @@ import {
   getReceivedOn,
   getPayablesDueBetween,
   getReceivablesDueBetween,
-  ContaAzulApiError,
 } from "@/lib/integrations/conta-azul/client";
 import { ContaAzulNotConnectedError } from "@/lib/integrations/conta-azul/connection";
 import { todayIso } from "./today";
+
+/**
+ * Surfaces the real error message regardless of where it came from —
+ * ContaAzulApiError (a bad API response) or a plain Error (e.g. OAuth
+ * token refresh failing in conta-azul/oauth.ts, which doesn't throw
+ * ContaAzulApiError). Swallowing that into a generic "Erro ao consultar a
+ * Conta Azul" made a real failure (like an expired/revoked refresh token)
+ * undiagnosable from the report alone.
+ */
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : "Erro ao consultar a Conta Azul";
+}
 
 export interface DailyFinanceSummary {
   status: "ok" | "not_connected" | "error";
@@ -27,8 +38,7 @@ export async function getDailyFinanceSummary(date: string = todayIso()): Promise
     if (err instanceof ContaAzulNotConnectedError) {
       return { status: "not_connected", totalReceived: 0, totalPaid: 0 };
     }
-    const message = err instanceof ContaAzulApiError ? err.message : "Erro ao consultar a Conta Azul";
-    return { status: "error", totalReceived: 0, totalPaid: 0, errorMessage: message };
+    return { status: "error", totalReceived: 0, totalPaid: 0, errorMessage: describeError(err) };
   }
 }
 
@@ -55,7 +65,6 @@ export async function getUpcomingDueSummary(fromDate: string, toDate: string): P
     if (err instanceof ContaAzulNotConnectedError) {
       return { status: "not_connected", toReceive: 0, toPay: 0 };
     }
-    const message = err instanceof ContaAzulApiError ? err.message : "Erro ao consultar a Conta Azul";
-    return { status: "error", toReceive: 0, toPay: 0, errorMessage: message };
+    return { status: "error", toReceive: 0, toPay: 0, errorMessage: describeError(err) };
   }
 }
