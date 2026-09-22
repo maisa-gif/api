@@ -144,8 +144,12 @@ export async function refreshAccessToken(refreshToken: string): Promise<ContaAzu
 
   return {
     accessToken: data.access_token,
-    // Cognito-style token endpoints generally don't re-issue a refresh_token
-    // on refresh — keep using the one already stored.
+    // Confirmed live (via a 400 invalid_grant/invalid_refresh_token error):
+    // Conta Azul's refresh_token is single-use and rotates on every
+    // refresh — the response always includes a new one, which the caller
+    // must persist and use next time, or the *next* refresh attempt fails
+    // as "already used". Unlike the Google OAuth refresh flow, don't fall
+    // back to reusing the old refresh_token here.
     refreshToken: data.refresh_token ?? null,
     expiresAt: new Date(Date.now() + data.expires_in * 1000),
   };
