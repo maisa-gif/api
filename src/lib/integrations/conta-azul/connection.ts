@@ -59,6 +59,19 @@ export async function disconnectContaAzul(): Promise<void> {
 
 export class ContaAzulNotConnectedError extends Error {}
 
+/**
+ * Conta Azul's refresh_token is single-use and rotates on every refresh
+ * (confirmed live: reusing one after it's already been redeemed fails with
+ * `invalid_grant`/`invalid_refresh_token`). The daily report fires several
+ * Conta Azul calls concurrently (sales/finance/due summaries, each via
+ * their own Promise.all), so without this lock two of them can both see
+ * an expired access token and race to refresh with the same refresh_token
+ * — one wins, the other gets rejected as already-used. This in-memory
+ * single-flight promise makes concurrent callers within the same
+ * serverless invocation share one refresh instead of racing.
+ */
+let refreshInFlight: Promise<string> | null = null;
+
 /** Returns a valid access token, refreshing it first if it's expired/near-expiry. */
 export async function getValidContaAzulAccessToken(): Promise<string> {
   const row = await prisma.integration.findUnique({ where: { type: TYPE } });
@@ -72,15 +85,25 @@ export async function getValidContaAzulAccessToken(): Promise<string> {
     return row.accessToken;
   }
 
-  const refreshed = await refreshAccessToken(row.refreshToken);
-  await prisma.integration.update({
-    where: { type: TYPE },
-    data: {
-      accessToken: refreshed.accessToken,
-      tokenExpiresAt: refreshed.expiresAt,
-      refreshToken: refreshed.refreshToken ?? row.refreshToken,
-    },
-  });
+  const currentRefreshToken = row.refreshToken;
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const refreshed = await refreshAccessToken(currentRefreshToken);
+        await prisma.integration.update({
+          where: { type: TYPE },
+          data: {
+            accessToken: refreshed.accessToken,
+            tokenExpiresAt: refreshed.expiresAt,
+            refreshToken: refreshed.refreshToken ?? currentRefreshToken,
+          },
+        });
+        return refreshed.accessToken;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+  }
 
-  return refreshed.accessToken;
+  return refreshInFlight;
 }
