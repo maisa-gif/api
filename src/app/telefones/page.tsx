@@ -1,10 +1,31 @@
-import { getPatientPhones } from "@/lib/report/patient-phones";
+import { getPatientPhones, type PatientPhone } from "@/lib/report/patient-phones";
 
 // Fetches live from CNN on every visit. CNN's 120 requests/minute limit
 // means a list of ~85 codes (one summary + one day listing each) takes
 // around two minutes.
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
+
+function formatDate(iso: string | null): string {
+  return iso?.split("-").reverse().join("/") ?? "";
+}
+
+/**
+ * Semicolon-separated with a BOM so Excel in pt-BR opens it straight into
+ * columns with accents intact (Google Sheets detects either way). Built
+ * from the rows already on the page so downloading doesn't re-run the
+ * slow, rate-limited CNN lookup.
+ */
+function toCsvDataUri(rows: PatientPhone[]): string {
+  const cell = (value: string | number | null) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const lines = [
+    ["Código", "Data", "Paciente", "Telefone", "E-mail"].map(cell).join(";"),
+    ...rows.map((r) =>
+      [r.codigo, formatDate(r.data), r.paciente, r.found ? r.telefone : "não encontrado", r.email].map(cell).join(";")
+    ),
+  ];
+  return `data:text/csv;charset=utf-8,${encodeURIComponent(`\uFEFF${lines.join("\r\n")}`)}`;
+}
 
 // Patient phone numbers are personal data and this app has no user auth,
 // so the page only renders with ?chave=<CRON_SECRET>. Appointment ids
@@ -66,10 +87,19 @@ export default async function TelefonesPage({
         {result.status === "error" && <p className="text-sm text-red-500">{result.errorMessage}</p>}
         {result.status === "ok" && (
           <>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              {result.rows.length} agendamentos
-              {notFound > 0 ? ` — ${notFound} não encontrado${notFound === 1 ? "" : "s"} no Clínica nas Nuvens` : ""}
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                {result.rows.length} agendamentos
+                {notFound > 0 ? ` — ${notFound} não encontrado${notFound === 1 ? "" : "s"} no Clínica nas Nuvens` : ""}
+              </p>
+              <a
+                href={toCsvDataUri(result.rows)}
+                download="telefones-pacientes.csv"
+                className="rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white dark:bg-zinc-50 dark:text-zinc-900"
+              >
+                Baixar planilha
+              </a>
+            </div>
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
@@ -86,7 +116,7 @@ export default async function TelefonesPage({
                     <tr key={row.codigo} className="border-b border-zinc-100 dark:border-zinc-900">
                       <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">{row.codigo}</td>
                       <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">
-                        {row.data?.split("-").reverse().join("/")}
+                        {formatDate(row.data)}
                       </td>
                       <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">{row.paciente ?? ""}</td>
                       <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">
