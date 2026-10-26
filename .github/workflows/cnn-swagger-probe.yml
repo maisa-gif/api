@@ -1,0 +1,40 @@
+name: TEMP - CNN swagger probe
+
+# Temporary: dumps the public (unauthenticated) CNN Swagger spec's
+# paciente endpoints into the job log. Lives only on this branch.
+on:
+  push:
+    branches: [claude/cnn-swagger-probe]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump paciente endpoints
+        run: |
+          curl -sf https://api.clinicanasnuvens.com.br/v2/api-docs -o spec.json
+          python3 - <<'PY'
+          import json
+          spec = json.load(open("spec.json"))
+          print("ALL PATHS:")
+          for p in sorted(spec["paths"]): print(" ", p, list(spec["paths"][p].keys()))
+          refs = set()
+          for p, ops in spec["paths"].items():
+              if "pacient" not in p.lower(): continue
+              for m, op in ops.items():
+                  print("\n==", m.upper(), p, "-", op.get("summary"))
+                  for prm in op.get("parameters", []):
+                      print("   param:", prm.get("name"), prm.get("in"), prm.get("type") or prm.get("schema"), "required" if prm.get("required") else "")
+                  for code, r in op.get("responses", {}).items():
+                      print("   resp", code, json.dumps(r.get("schema")))
+                      s = json.dumps(r.get("schema"))
+                      import re
+                      refs.update(re.findall(r'#/definitions/([^"]+)', s))
+          for name in sorted(refs):
+              d = spec["definitions"].get(name, {})
+              print("\nDEF", name, sorted(d.get("properties", {}).keys()))
+              for k, v in d.get("properties", {}).items():
+                  if "$ref" in json.dumps(v):
+                      inner = json.dumps(v).split("#/definitions/")[1].split('"')[0]
+                      print("   ", k, "->", inner, sorted(spec["definitions"].get(inner, {}).get("properties", {}).keys()))
+          PY
