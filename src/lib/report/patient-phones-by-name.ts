@@ -2,8 +2,7 @@ import { getIntegrationStatus } from "@/lib/integrations/service";
 import {
   ClinicaNasNuvensClient,
   ClinicaNasNuvensApiError,
-  type ClinicaNasNuvensAppointment,
-  type ClinicaNasNuvensAppointmentSummary,
+  type ClinicaNasNuvensPatient,
 } from "@/lib/integrations/clinica-nas-nuvens/client";
 
 // CNN rejects more than 120 requests/minute (429), so calls are spaced to
@@ -13,16 +12,12 @@ const RATE_LIMIT_RETRY_MS = 60_000;
 // Stops starting new CNN calls before Vercel's 300s maxDuration kills the
 // request, so the rows done so far still come back.
 const TIME_BUDGET_MS = 270_000;
-// Appointment summaries (the only place the patient name lives) fetched per
-// row before giving up on a date that has many appointments.
-const MAX_SUMMARIES_PER_ROW = 20;
-const SURGERY_PROCEDURE = /cirurg|transplant|implante/i;
 const NAME_STOPWORDS = new Set(["de", "da", "do", "das", "dos", "e"]);
 
 export interface NameLookupInput {
   aba: string;
   nome: string;
-  /** "dd/MM/yyyy", or "" when the sheet row has no surgery date. */
+  /** Surgery date as written in the sheet; passed through to the CSV only. */
   data: string;
 }
 
@@ -62,37 +57,41 @@ function createLimiter(deadline: number) {
   };
 }
 
-function nameTokens(name: string): string[] {
-  return name
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .split(/[^a-z]+/)
-    .filter((t) => t.length > 1 && !NAME_STOPWORDS.has(t));
+const stripAccents = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+/** Name words as typed (accents kept), minus prepositions and initials. */
+function nameWords(name: string): string[] {
+  return name.split(/[^\p{L}]+/u).filter((w) => w.length > 1 && !NAME_STOPWORDS.has(w.toLowerCase()));
+}
+
+const nameTokens = (name: string) => nameWords(name).map((w) => stripAccents(w).toLowerCase());
+
+/** How many of the sheet name's words appear in the registered name. */
+function sharedTokens(sheetName: string, cnnName: string): number {
+  const cnn = new Set(nameTokens(cnnName));
+  return nameTokens(sheetName).filter((t) => cnn.has(t)).length;
 }
 
 /**
  * Sheet names are often shortened ("Jose Augusto Mello" for "José Augusto
- * Santos de Mello", or just a first name), so two shared tokens are enough
+ * Santos de Mello", or just a first name), so two shared words are enough
  * for a multi-word name and one for a single word.
  */
-function namesMatch(sheetName: string, cnnName: string): boolean {
-  const sheet = nameTokens(sheetName);
-  const cnn = new Set(nameTokens(cnnName));
-  const shared = sheet.filter((t) => cnn.has(t)).length;
-  return sheet.length > 0 && shared >= Math.min(2, sheet.length);
+function isMatch(sheetName: string, cnnName: string): boolean {
+  const sheetTokenCount = nameTokens(sheetName).length;
+  return sheetTokenCount > 0 && sharedTokens(sheetName, cnnName) >= Math.min(2, sheetTokenCount);
 }
 
-/** "dd/MM/yyyy" → "yyyy-MM-dd", the only format /agenda/lista accepts. */
-function toIso(date: string): string {
-  const [day, month, year] = date.split("/");
-  return `${year}-${month}-${day}`;
+function phoneOf(patient: ClinicaNasNuvensPatient): string | null {
+  const c = patient.contato;
+  return c?.telefoneCelular || c?.telefoneResidencial || c?.telefoneRecados || c?.telefoneComercial || null;
 }
 
 /**
- * Finds each patient's phone/email by listing CNN appointments on their
- * surgery date and matching the patient name, for spreadsheets that only
- * have "name + surgery date" rather than CNN appointment codes.
+ * Finds each patient's phone/email in CNN's patient registry by name, for
+ * spreadsheets that list patients by (often shortened) name rather than
+ * CNN appointment codes, keeping the registered patients that share the
+ * most words with the sheet's name.
  */
 export async function getPatientPhonesByName(inputs: NameLookupInput[]): Promise<NameLookupResult> {
   const cnnStatus = await getIntegrationStatus("CLINICA_NAS_NUVENS");
@@ -102,43 +101,39 @@ export async function getPatientPhonesByName(inputs: NameLookupInput[]): Promise
 
   const client = new ClinicaNasNuvensClient(cnnStatus.token);
   const limited = createLimiter(Date.now() + TIME_BUDGET_MS);
-  const dayCache = new Map<string, Promise<ClinicaNasNuvensAppointment[]>>();
-  const summaryCache = new Map<number, Promise<ClinicaNasNuvensAppointmentSummary>>();
-
-  const listDay = (iso: string) => {
-    if (!dayCache.has(iso)) dayCache.set(iso, limited(() => client.listAppointments(iso, iso)));
-    return dayCache.get(iso)!;
-  };
-  const summarize = (id: number) => {
-    if (!summaryCache.has(id)) summaryCache.set(id, limited(() => client.getAppointmentSummary(id)));
-    return summaryCache.get(id)!;
+  const searchCache = new Map<string, Promise<ClinicaNasNuvensPatient[]>>();
+  const search = (term: string) => {
+    if (!searchCache.has(term)) searchCache.set(term, limited(() => client.searchPatients(term)));
+    return searchCache.get(term)!;
   };
 
   async function lookup(input: NameLookupInput): Promise<NameLookupRow> {
     const empty = { ...input, nomeClinica: null, telefone: null, email: null };
-    if (!input.data) return { ...empty, observacao: "sem data na planilha" };
+    const words = nameWords(input.nome);
+    if (words.length === 0) return { ...empty, observacao: "nome vazio" };
 
+    // The full name as typed usually hits directly; otherwise fall back to
+    // its longest word (accented and not, since it's unknown whether
+    // nomeContem ignores accents).
+    const longest = [...words].sort((a, b) => b.length - a.length)[0];
+    const terms = [...new Set([words.join(" "), longest, stripAccents(longest)])];
     try {
-      const appointments = await listDay(toIso(input.data));
-      // Surgery appointments first: the sheet's date is the surgery date.
-      const candidates = [
-        ...appointments.filter((a) => a.procedimentos.some((p) => SURGERY_PROCEDURE.test(p.nome))),
-        ...appointments.filter((a) => !a.procedimentos.some((p) => SURGERY_PROCEDURE.test(p.nome))),
-      ].slice(0, MAX_SUMMARIES_PER_ROW);
-
-      for (const appointment of candidates) {
-        const summary = await summarize(appointment.id);
-        if (namesMatch(input.nome, summary.nomePaciente)) {
-          return {
-            ...input,
-            nomeClinica: summary.nomePaciente,
-            telefone: appointment.telefoneCelularPaciente,
-            email: appointment.emailPaciente,
-            observacao: "",
-          };
-        }
+      let matches: ClinicaNasNuvensPatient[] = [];
+      for (const term of terms) {
+        matches = (await search(term)).filter((p) => isMatch(input.nome, p.nome));
+        if (matches.length > 0) break;
       }
-      return { ...empty, observacao: "não encontrado nessa data" };
+      if (matches.length === 0) return { ...empty, observacao: "não encontrado no cadastro" };
+
+      const best = Math.max(...matches.map((p) => sharedTokens(input.nome, p.nome)));
+      const [first, ...others] = matches.filter((p) => sharedTokens(input.nome, p.nome) === best);
+      return {
+        ...input,
+        nomeClinica: first.nome,
+        telefone: phoneOf(first),
+        email: first.contato?.email ?? null,
+        observacao: others.length > 0 ? `conferir — também: ${others.map((p) => p.nome).join(", ")}` : "",
+      };
     } catch (err) {
       if (err instanceof OutOfTimeError) return { ...empty, observacao: "não deu tempo — busque de novo só estes" };
       throw err;

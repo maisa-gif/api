@@ -1,13 +1,14 @@
 import { getPatientPhonesByName, type NameLookupInput } from "@/lib/report/patient-phones-by-name";
 
 // The name lookup paces CNN calls under its 120 requests/minute limit, so
-// ~70 rows take a couple of minutes.
+// ~80 rows take a minute or two.
 export const maxDuration = 300;
 
 /**
- * Form POST from /telefones ("Buscar por nome"): `chave` must equal
- * CRON_SECRET since the response holds patient data; `linhas` has one
- * "aba;nome;dd/MM/yyyy" per line. POST (not a GET page) keeps patient
+ * Form POST from /telefones ("Buscar por nome no cadastro"): `chave` must
+ * equal CRON_SECRET since the response holds patient data; `linhas` has one
+ * "aba;nome;data" per line (aba and data are just echoed into the CSV).
+ * A line with no ";" is just a name. POST (not a GET page) keeps patient
  * names out of URLs and access logs. Responds with a CSV download.
  */
 export async function POST(request: Request) {
@@ -20,6 +21,7 @@ export async function POST(request: Request) {
   const inputs: NameLookupInput[] = String(form.get("linhas") ?? "")
     .split(/\r?\n/)
     .map((line) => line.split(";").map((part) => part.trim()))
+    .map((parts) => (parts.length === 1 ? ["", parts[0]] : parts))
     .filter(([, nome]) => Boolean(nome))
     .map(([aba, nome, data = ""]) => ({ aba, nome, data }));
   if (inputs.length === 0) {

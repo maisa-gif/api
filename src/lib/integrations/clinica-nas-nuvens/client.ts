@@ -18,6 +18,7 @@ const CID_HEADER = "clinicaNasNuvens-cid";
 const AGENDA_LISTA_PATH = "/agenda/lista";
 const AGENDA_RESUMIDA_PATH = (id: number) => `/agenda/${id}/resumida`;
 const EXECUTOR_AGENDA_LISTA_PATH = "/executor-agenda/lista";
+const PACIENTE_LISTA_PATH = "/paciente/lista";
 // Server-observed max in testing; loop pages beyond this if totalPaginas > 1.
 const PAGE_SIZE = 200;
 
@@ -81,6 +82,26 @@ export interface ClinicaNasNuvensAppointmentSummary {
   data: string;
   horaInicial: string;
   horaFinal: string;
+}
+
+/** Shape of an item in GET /paciente/lista's `lista` array (Swagger: PacienteRetornoAPI). */
+export interface ClinicaNasNuvensPatient {
+  id: number;
+  nome: string;
+  ativo: boolean;
+  contato: {
+    email: string | null;
+    telefoneCelular: string | null;
+    telefoneResidencial: string | null;
+    telefoneRecados: string | null;
+    telefoneComercial: string | null;
+  } | null;
+}
+
+interface ClinicaNasNuvensPatientListaResponse {
+  pagina: number;
+  totalPaginas: number;
+  lista: ClinicaNasNuvensPatient[];
 }
 
 export class ClinicaNasNuvensApiError extends Error {
@@ -170,6 +191,13 @@ export class ClinicaNasNuvensClient {
   /** Fetches the patient name + a condensed status for a single appointment. */
   async getAppointmentSummary(id: number): Promise<ClinicaNasNuvensAppointmentSummary> {
     return this.request<ClinicaNasNuvensAppointmentSummary>(AGENDA_RESUMIDA_PATH(id));
+  }
+
+  /** First page of patients whose name contains `nomeContem`. */
+  async searchPatients(nomeContem: string, registrosPorPagina = PAGE_SIZE): Promise<ClinicaNasNuvensPatient[]> {
+    const params = new URLSearchParams({ nomeContem, pagina: "0", registrosPorPagina: String(registrosPorPagina) });
+    const page = await this.request<ClinicaNasNuvensPatientListaResponse>(`${PACIENTE_LISTA_PATH}?${params.toString()}`);
+    return page.lista;
   }
 
   /** Lists every professional/executor (active or not), paginating through all pages. */
