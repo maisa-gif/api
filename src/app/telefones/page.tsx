@@ -69,11 +69,11 @@ export default async function TelefonesPage({
         </form>
 
         <form method="post" action="/api/telefones/nomes" className="flex w-full max-w-2xl flex-col gap-4">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Buscar por nome e data da cirurgia</h2>
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Buscar por nome no cadastro</h2>
           <input type="hidden" name="chave" value={cronSecret} />
           <label className="text-sm text-zinc-500 dark:text-zinc-400" htmlFor="linhas">
-            Cole uma linha por paciente no formato aba;nome;dd/mm/aaaa. A planilha baixa sozinha quando terminar
-            (alguns minutos):
+            Cole uma linha por paciente no formato aba;nome;data (aba e data são opcionais, só vão para a planilha).
+            A planilha baixa sozinha quando terminar (alguns minutos):
           </label>
           <textarea
             id="linhas"
