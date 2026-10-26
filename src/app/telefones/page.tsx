@@ -67,6 +67,24 @@ export default async function TelefonesPage({
             Buscar telefones
           </button>
         </form>
+
+        <form method="post" action="/api/telefones/nomes" className="flex w-full max-w-2xl flex-col gap-4">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Buscar por nome e data da cirurgia</h2>
+          <input type="hidden" name="chave" value={cronSecret} />
+          <label className="text-sm text-zinc-500 dark:text-zinc-400" htmlFor="linhas">
+            Cole uma linha por paciente no formato aba;nome;dd/mm/aaaa. A planilha baixa sozinha quando terminar
+            (alguns minutos):
+          </label>
+          <textarea
+            id="linhas"
+            name="linhas"
+            rows={10}
+            className="rounded-lg border border-zinc-300 p-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          />
+          <button type="submit" className="rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white dark:bg-zinc-50 dark:text-zinc-900">
+            Buscar e baixar planilha
+          </button>
+        </form>
       </div>
     );
   }
