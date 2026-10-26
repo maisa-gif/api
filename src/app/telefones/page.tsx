@@ -1,8 +1,10 @@
 import { getPatientPhones } from "@/lib/report/patient-phones";
 
-// Fetches live from CNN on every visit.
+// Fetches live from CNN on every visit. CNN's 120 requests/minute limit
+// means a list of ~85 codes (one summary + one day listing each) takes
+// around two minutes.
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 // Patient phone numbers are personal data and this app has no user auth,
 // so the page only renders with ?chave=<CRON_SECRET>. Appointment ids
