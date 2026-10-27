@@ -16,6 +16,9 @@ export interface HairTransplantSurgery {
   data: string;
   horaInicio: string;
   paciente: string | null;
+  procedimentos: string;
+  observacoes: string | null;
+  status: string;
 }
 
 export interface HairTransplantSurgeriesResult {
@@ -71,6 +74,17 @@ async function withRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+function describe(appointment: ClinicaNasNuvensAppointment): Omit<HairTransplantSurgery, "paciente"> {
+  return {
+    codigo: appointment.id,
+    data: appointment.data,
+    horaInicio: appointment.horaInicio,
+    procedimentos: (appointment.procedimentos ?? []).map((p) => p.nome).join(", "),
+    observacoes: appointment.observacoes,
+    status: appointment.status,
+  };
+}
+
 /** Last day of `month` (YYYY-MM) as YYYY-MM-DD. */
 function lastDayOfMonth(month: string): string {
   const [year, m] = month.split("-").map(Number);
@@ -103,7 +117,7 @@ export async function getHairTransplantSurgeries(month: string): Promise<HairTra
         const paciente = await withRateLimitRetry(() =>
           client.getAppointmentSummary(appointment.id).then((s) => s.nomePaciente)
         );
-        return { codigo: appointment.id, data: appointment.data, horaInicio: appointment.horaInicio, paciente };
+        return { ...describe(appointment), paciente };
       })
     );
     return { status: "ok", rows, appointmentCount: appointments.length, procedureCounts: countProcedures(appointments) };
@@ -115,5 +129,62 @@ export async function getHairTransplantSurgeries(month: string): Promise<HairTra
           ? err.message
           : String(err);
     return { status: "error", rows: [], appointmentCount: 0, procedureCounts: [], errorMessage };
+  }
+}
+
+export interface DayAppointment extends HairTransplantSurgery {
+  profissional: string;
+  isSurgery: boolean;
+}
+
+export interface DayAppointmentsResult {
+  status: "ok" | "not_connected" | "error";
+  rows: DayAppointment[];
+  errorMessage?: string;
+}
+
+/**
+ * Every CNN appointment on `date` (YYYY-MM-DD), cancelled ones included,
+ * flagged with whether the month report counts it as a surgery — for
+ * checking the report against what the clinic sees in its agenda.
+ */
+export async function getDayAppointments(date: string): Promise<DayAppointmentsResult> {
+  const cnnStatus = await getIntegrationStatus("CLINICA_NAS_NUVENS");
+  if (!cnnStatus.enabled || !cnnStatus.token) {
+    return { status: "not_connected", rows: [] };
+  }
+
+  try {
+    const client = new ClinicaNasNuvensClient(cnnStatus.token);
+    const appointments = (await withRateLimitRetry(() => client.listAppointments(date, date))).sort((a, b) =>
+      a.horaInicio.localeCompare(b.horaInicio)
+    );
+    await sleep(REQUEST_INTERVAL_MS);
+    const executors = await withRateLimitRetry(() => client.listExecutors());
+    const nameById = new Map(executors.map((e) => [e.idpessoa, e.nome]));
+
+    const rows = await Promise.all(
+      appointments.map(async (appointment, i) => {
+        await sleep((i + 1) * REQUEST_INTERVAL_MS);
+        const paciente = await withRateLimitRetry(() =>
+          client.getAppointmentSummary(appointment.id).then((s) => s.nomePaciente)
+        );
+        return {
+          ...describe(appointment),
+          paciente,
+          profissional: nameById.get(appointment.idPessoaExecutor) ?? `Profissional #${appointment.idPessoaExecutor}`,
+          isSurgery: !CANCELLED_STATUSES.includes(appointment.status) && isHairTransplant(appointment),
+        };
+      })
+    );
+    return { status: "ok", rows };
+  } catch (err) {
+    const errorMessage =
+      err instanceof ClinicaNasNuvensApiError
+        ? `${err.message} (status ${err.status}, body: ${JSON.stringify(err.body)})`
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    return { status: "error", rows: [], errorMessage };
   }
 }
