@@ -92,7 +92,7 @@ export default async function CirurgiasPage({
             {result.rows.length === 0 && (
               <div className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-950 dark:text-amber-300">
                 <p>
-                  Nenhum agendamento com &quot;transplante&quot; ou &quot;capilar&quot; no procedimento ou na observação entre os{" "}
+                  Nenhum agendamento com &quot;transplante&quot; ou &quot;cirurgia capilar&quot; no procedimento ou na observação entre os{" "}
                   {result.appointmentCount} agendamentos do mês. Procedimentos encontrados na agenda:
                 </p>
                 <ul className="mt-2 list-disc pl-5">

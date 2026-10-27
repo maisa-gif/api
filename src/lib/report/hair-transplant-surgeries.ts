@@ -41,7 +41,8 @@ function isHairTransplant(appointment: ClinicaNasNuvensAppointment): boolean {
   const texts = [...(appointment.procedimentos ?? []).map((p) => p.nome ?? ""), appointment.observacoes ?? ""];
   return texts.some((text) => {
     const t = normalize(text);
-    return t.includes("transplante") || t.includes("capilar");
+    // "capilar" alone would also catch hair consultations.
+    return t.includes("transplante") || (t.includes("cirurgia") && t.includes("capil"));
   });
 }
 
@@ -54,6 +55,20 @@ function countProcedures(appointments: ClinicaNasNuvensAppointment[]): [string, 
     }
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+/**
+ * A 429 means the minute's quota was already spent (a page reload, or the
+ * agenda sync cron running at the same time) — wait it out once.
+ */
+async function withRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!(err instanceof ClinicaNasNuvensApiError && err.status === 429)) throw err;
+    await sleep(RATE_LIMIT_RETRY_MS);
+    return fn();
+  }
 }
 
 /** Last day of `month` (YYYY-MM) as YYYY-MM-DD. */
@@ -75,7 +90,9 @@ export async function getHairTransplantSurgeries(month: string): Promise<HairTra
 
   try {
     const client = new ClinicaNasNuvensClient(cnnStatus.token);
-    const appointments = await client.listAppointments(`${month}-01`, lastDayOfMonth(month));
+    const appointments = await withRateLimitRetry(() =>
+      client.listAppointments(`${month}-01`, lastDayOfMonth(month))
+    );
     const surgeries = appointments
       .filter((a) => !CANCELLED_STATUSES.includes(a.status) && isHairTransplant(a))
       .sort((a, b) => `${a.data} ${a.horaInicio}`.localeCompare(`${b.data} ${b.horaInicio}`));
@@ -83,15 +100,9 @@ export async function getHairTransplantSurgeries(month: string): Promise<HairTra
     const rows = await Promise.all(
       surgeries.map(async (appointment, i) => {
         await sleep((i + 1) * REQUEST_INTERVAL_MS);
-        const fetchName = () => client.getAppointmentSummary(appointment.id).then((s) => s.nomePaciente);
-        let paciente: string | null;
-        try {
-          paciente = await fetchName();
-        } catch (err) {
-          if (!(err instanceof ClinicaNasNuvensApiError && err.status === 429)) throw err;
-          await sleep(RATE_LIMIT_RETRY_MS);
-          paciente = await fetchName();
-        }
+        const paciente = await withRateLimitRetry(() =>
+          client.getAppointmentSummary(appointment.id).then((s) => s.nomePaciente)
+        );
         return { codigo: appointment.id, data: appointment.data, horaInicio: appointment.horaInicio, paciente };
       })
     );
