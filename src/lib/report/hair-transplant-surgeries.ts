@@ -27,8 +27,8 @@ export interface HairTransplantSurgeriesResult {
   rows: HairTransplantSurgery[];
   /** Every appointment in the month, cancelled ones included. */
   appointmentCount: number;
-  /** Procedure name → appointments using it, to spot how surgeries are named when nothing matches. */
-  procedureCounts: [string, number][];
+  /** The month's procedure types (idTipoProcedimento), to pick the one surgeries are filed under. */
+  procedureTypes: ProcedureType[];
   /** False when CNN sent no "tipo de atendimento" text, so the match fell back to procedures/notes. */
   matchedByTipoAtendimento: boolean;
   errorMessage?: string;
@@ -61,33 +61,52 @@ function tipoAtendimento(appointment: ClinicaNasNuvensAppointment): string | nul
 }
 
 /**
- * Matches tipo de atendimento "Cirurgia Transplante Capilar". When CNN
- * sends no tipo de atendimento, falls back to procedure names and notes,
- * which also catch consultations and follow-ups mentioning a transplant.
+ * Matches tipo de atendimento "Cirurgia Transplante Capilar". CNN's agenda
+ * list sends that only as each procedure's numeric idTipoProcedimento, so
+ * `tipos` (picked on the page from the month's procedure types) takes
+ * precedence. Without it, falls back to procedure names — notes are left
+ * out since consultations mention the transplant there too.
  */
-function isHairTransplant(appointment: ClinicaNasNuvensAppointment): boolean {
+function isHairTransplant(appointment: ClinicaNasNuvensAppointment, tipos: number[]): boolean {
+  if (tipos.length > 0) {
+    return (appointment.procedimentos ?? []).some((p) => tipos.includes(p.idTipoProcedimento));
+  }
   const tipo = tipoAtendimento(appointment);
   if (tipo !== null) {
     const t = normalize(tipo);
     return t.includes("transplante") && t.includes("capil");
   }
-  const texts = [...(appointment.procedimentos ?? []).map((p) => p.nome ?? ""), appointment.observacoes ?? ""];
-  return texts.some((text) => {
-    const t = normalize(text);
+  return (appointment.procedimentos ?? []).some((p) => {
+    const t = normalize(p.nome ?? "");
     // "capilar" alone would also catch hair consultations.
     return t.includes("transplante") || (t.includes("cirurgia") && t.includes("capil"));
   });
 }
 
-function countProcedures(appointments: ClinicaNasNuvensAppointment[]): [string, number][] {
-  const counts = new Map<string, number>();
+export interface ProcedureType {
+  id: number;
+  /** Procedure names filed under this type, most used first. */
+  procedimentos: string[];
+  appointmentCount: number;
+}
+
+function procedureTypes(appointments: ClinicaNasNuvensAppointment[]): ProcedureType[] {
+  const byType = new Map<number, { names: Map<string, number>; appointments: Set<number> }>();
   for (const appointment of appointments) {
-    const names = (appointment.procedimentos ?? []).map((p) => p.nome).filter(Boolean);
-    for (const name of names.length > 0 ? names : ["(sem procedimento)"]) {
-      counts.set(name, (counts.get(name) ?? 0) + 1);
+    for (const p of appointment.procedimentos ?? []) {
+      const entry = byType.get(p.idTipoProcedimento) ?? { names: new Map(), appointments: new Set() };
+      entry.names.set(p.nome, (entry.names.get(p.nome) ?? 0) + 1);
+      entry.appointments.add(appointment.id);
+      byType.set(p.idTipoProcedimento, entry);
     }
   }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  return [...byType.entries()]
+    .map(([id, { names, appointments }]) => ({
+      id,
+      procedimentos: [...names.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name),
+      appointmentCount: appointments.size,
+    }))
+    .sort((a, b) => b.appointmentCount - a.appointmentCount);
 }
 
 /**
@@ -109,7 +128,7 @@ function describe(appointment: ClinicaNasNuvensAppointment): Omit<HairTransplant
     codigo: appointment.id,
     data: appointment.data,
     horaInicio: appointment.horaInicio,
-    procedimentos: (appointment.procedimentos ?? []).map((p) => p.nome).join(", "),
+    procedimentos: (appointment.procedimentos ?? []).map((p) => `${p.nome} (tipo ${p.idTipoProcedimento})`).join(", "),
     tipoAtendimento: tipoAtendimento(appointment),
     observacoes: appointment.observacoes,
     status: appointment.status,
@@ -127,10 +146,10 @@ function lastDayOfMonth(month: string): string {
  * hair transplant procedure. /agenda/lista has no patient name, so each
  * match's name comes from /agenda/{id}/resumida.
  */
-export async function getHairTransplantSurgeries(month: string): Promise<HairTransplantSurgeriesResult> {
+export async function getHairTransplantSurgeries(month: string, tipos: number[] = []): Promise<HairTransplantSurgeriesResult> {
   const cnnStatus = await getIntegrationStatus("CLINICA_NAS_NUVENS");
   if (!cnnStatus.enabled || !cnnStatus.token) {
-    return { status: "not_connected", rows: [], appointmentCount: 0, procedureCounts: [], matchedByTipoAtendimento: false };
+    return { status: "not_connected", rows: [], appointmentCount: 0, procedureTypes: [], matchedByTipoAtendimento: false };
   }
 
   try {
@@ -139,7 +158,7 @@ export async function getHairTransplantSurgeries(month: string): Promise<HairTra
       client.listAppointments(`${month}-01`, lastDayOfMonth(month))
     );
     const surgeries = appointments
-      .filter((a) => !CANCELLED_STATUSES.includes(a.status) && isHairTransplant(a))
+      .filter((a) => !CANCELLED_STATUSES.includes(a.status) && isHairTransplant(a, tipos))
       .sort((a, b) => `${a.data} ${a.horaInicio}`.localeCompare(`${b.data} ${b.horaInicio}`));
 
     const rows = await Promise.all(
@@ -155,8 +174,8 @@ export async function getHairTransplantSurgeries(month: string): Promise<HairTra
       status: "ok",
       rows,
       appointmentCount: appointments.length,
-      procedureCounts: countProcedures(appointments),
-      matchedByTipoAtendimento: appointments.some((a) => tipoAtendimento(a) !== null),
+      procedureTypes: procedureTypes(appointments),
+      matchedByTipoAtendimento: tipos.length > 0 || appointments.some((a) => tipoAtendimento(a) !== null),
     };
   } catch (err) {
     const errorMessage =
@@ -169,7 +188,7 @@ export async function getHairTransplantSurgeries(month: string): Promise<HairTra
       status: "error",
       rows: [],
       appointmentCount: 0,
-      procedureCounts: [],
+      procedureTypes: [],
       matchedByTipoAtendimento: false,
       errorMessage,
     };
@@ -194,7 +213,7 @@ export interface DayAppointmentsResult {
  * flagged with whether the month report counts it as a surgery — for
  * checking the report against what the clinic sees in its agenda.
  */
-export async function getDayAppointments(date: string): Promise<DayAppointmentsResult> {
+export async function getDayAppointments(date: string, tipos: number[] = []): Promise<DayAppointmentsResult> {
   const cnnStatus = await getIntegrationStatus("CLINICA_NAS_NUVENS");
   if (!cnnStatus.enabled || !cnnStatus.token) {
     return { status: "not_connected", rows: [] };
@@ -219,7 +238,7 @@ export async function getDayAppointments(date: string): Promise<DayAppointmentsR
           ...describe(appointment),
           paciente,
           profissional: nameById.get(appointment.idPessoaExecutor) ?? `Profissional #${appointment.idPessoaExecutor}`,
-          isSurgery: !CANCELLED_STATUSES.includes(appointment.status) && isHairTransplant(appointment),
+          isSurgery: !CANCELLED_STATUSES.includes(appointment.status) && isHairTransplant(appointment, tipos),
         };
       })
     );

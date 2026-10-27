@@ -39,7 +39,7 @@ export default async function CirurgiasPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
-  const { chave, mes, dia } = await searchParams;
+  const { chave, mes, dia, tipos: tiposParam } = await searchParams;
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || chave !== cronSecret) {
     return (
@@ -50,12 +50,17 @@ export default async function CirurgiasPage({
     );
   }
 
+  // ?tipos=12&tipos=34 — procedure type ids (idTipoProcedimento) picked
+  // on the page as the "Cirurgia Transplante Capilar" tipo de atendimento.
+  const tipos = [tiposParam ?? []].flat().map(Number).filter(Number.isInteger);
+  const tiposQuery = tipos.map((t) => `&tipos=${t}`).join("");
+
   if (typeof dia === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dia)) {
-    return <DayView date={dia} cronSecret={cronSecret} />;
+    return <DayView date={dia} cronSecret={cronSecret} tipos={tipos} tiposQuery={tiposQuery} />;
   }
 
   const month = typeof mes === "string" && /^\d{4}-\d{2}$/.test(mes) ? mes : todayIso().slice(0, 7);
-  const result = await getHairTransplantSurgeries(month);
+  const result = await getHairTransplantSurgeries(month, tipos);
   const [year, monthNumber] = month.split("-");
 
   return (
@@ -66,6 +71,9 @@ export default async function CirurgiasPage({
 
       <form className="flex items-center gap-2">
         <input type="hidden" name="chave" value={cronSecret} />
+        {tipos.map((t) => (
+          <input key={t} type="hidden" name="tipos" value={t} />
+        ))}
         <input
           type="month"
           name="mes"
@@ -76,7 +84,7 @@ export default async function CirurgiasPage({
           Ver mês
         </button>
       </form>
-      <DayForm cronSecret={cronSecret} />
+      <DayForm cronSecret={cronSecret} tipos={tipos} />
 
       <div className="w-full max-w-4xl rounded-2xl bg-white p-8 shadow-sm ring-1 ring-black/5 dark:bg-zinc-900 dark:ring-white/10">
         {result.status === "not_connected" && (
@@ -101,26 +109,35 @@ export default async function CirurgiasPage({
             </div>
             {!result.matchedByTipoAtendimento && (
               <p className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                O Clínica nas Nuvens não enviou o tipo de atendimento dos agendamentos, então a lista foi montada pelo
-                procedimento/observação e pode incluir consultas e retornos. Abra um dia (clique na data) e confira os
-                campos enviados no fim da página.
+                Nenhum tipo de atendimento selecionado: a lista foi montada pelo nome do procedimento e pode estar
+                incompleta. Marque abaixo o(s) tipo(s) que correspondem à cirurgia de transplante capilar.
               </p>
             )}
-            {result.rows.length === 0 && (
-              <div className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                <p>
-                  Nenhum agendamento com &quot;transplante&quot; ou &quot;cirurgia capilar&quot; no procedimento ou na observação entre os{" "}
-                  {result.appointmentCount} agendamentos do mês. Procedimentos encontrados na agenda:
-                </p>
-                <ul className="mt-2 list-disc pl-5">
-                  {result.procedureCounts.map(([name, count]) => (
-                    <li key={name}>
-                      {name} — {count}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <details className="mt-4 text-sm" open={!result.matchedByTipoAtendimento}>
+              <summary className="cursor-pointer text-zinc-500 dark:text-zinc-400">
+                Tipos de atendimento do mês ({result.appointmentCount} agendamentos)
+              </summary>
+              <form className="mt-2 flex flex-col gap-2">
+                <input type="hidden" name="chave" value={cronSecret} />
+                <input type="hidden" name="mes" value={month} />
+                {result.procedureTypes.map((type) => (
+                  <label key={type.id} className="flex items-start gap-2 text-zinc-700 dark:text-zinc-300">
+                    <input type="checkbox" name="tipos" value={type.id} defaultChecked={tipos.includes(type.id)} className="mt-1" />
+                    <span>
+                      <strong>Tipo {type.id}</strong> — {type.appointmentCount} agendamentos:{" "}
+                      {type.procedimentos.slice(0, 8).join(", ")}
+                      {type.procedimentos.length > 8 ? ", ..." : ""}
+                    </span>
+                  </label>
+                ))}
+                <button
+                  type="submit"
+                  className="self-start rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white dark:bg-zinc-50 dark:text-zinc-900"
+                >
+                  Usar tipos marcados
+                </button>
+              </form>
+            </details>
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
@@ -136,7 +153,7 @@ export default async function CirurgiasPage({
                   {result.rows.map((row) => (
                     <tr key={row.codigo} className="border-b border-zinc-100 dark:border-zinc-900">
                       <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">
-                        <a className="underline" href={`?chave=${encodeURIComponent(cronSecret)}&dia=${row.data}`}>
+                        <a className="underline" href={`?chave=${encodeURIComponent(cronSecret)}&dia=${row.data}${tiposQuery}`}>
                           {formatDate(row.data)}
                         </a>
                       </td>
@@ -159,10 +176,13 @@ export default async function CirurgiasPage({
   );
 }
 
-function DayForm({ cronSecret, date }: { cronSecret: string; date?: string }) {
+function DayForm({ cronSecret, tipos, date }: { cronSecret: string; tipos: number[]; date?: string }) {
   return (
     <form className="flex items-center gap-2">
       <input type="hidden" name="chave" value={cronSecret} />
+      {tipos.map((t) => (
+        <input key={t} type="hidden" name="tipos" value={t} />
+      ))}
       <input
         type="date"
         name="dia"
@@ -176,14 +196,24 @@ function DayForm({ cronSecret, date }: { cronSecret: string; date?: string }) {
   );
 }
 
-async function DayView({ date, cronSecret }: { date: string; cronSecret: string }) {
-  const result = await getDayAppointments(date);
+async function DayView({
+  date,
+  cronSecret,
+  tipos,
+  tiposQuery,
+}: {
+  date: string;
+  cronSecret: string;
+  tipos: number[];
+  tiposQuery: string;
+}) {
+  const result = await getDayAppointments(date, tipos);
 
   return (
     <div className="flex flex-1 flex-col items-center gap-8 bg-zinc-50 px-6 py-16 dark:bg-black">
       <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">Agenda de {formatDate(date)}</h1>
-      <DayForm cronSecret={cronSecret} date={date} />
-      <a className="text-sm underline" href={`?chave=${encodeURIComponent(cronSecret)}&mes=${date.slice(0, 7)}`}>
+      <DayForm cronSecret={cronSecret} tipos={tipos} date={date} />
+      <a className="text-sm underline" href={`?chave=${encodeURIComponent(cronSecret)}&mes=${date.slice(0, 7)}${tiposQuery}`}>
         Voltar para o relatório do mês
       </a>
 
