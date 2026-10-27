@@ -21,6 +21,10 @@ export interface HairTransplantSurgery {
 export interface HairTransplantSurgeriesResult {
   status: "ok" | "not_connected" | "error";
   rows: HairTransplantSurgery[];
+  /** Every appointment in the month, cancelled ones included. */
+  appointmentCount: number;
+  /** Procedure name → appointments using it, to spot how surgeries are named when nothing matches. */
+  procedureCounts: [string, number][];
   errorMessage?: string;
 }
 
@@ -29,12 +33,27 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const normalize = (s: string) =>
   s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-/** Matches "Cirurgia Transplante Capilar" and spelling variants of it. */
+/**
+ * Matches "Cirurgia Transplante Capilar" and variants of it, whether the
+ * clinic recorded it as a procedure or only in the appointment's notes.
+ */
 function isHairTransplant(appointment: ClinicaNasNuvensAppointment): boolean {
-  return (appointment.procedimentos ?? []).some((p) => {
-    const nome = normalize(p.nome ?? "");
-    return nome.includes("transplante") && nome.includes("capil");
+  const texts = [...(appointment.procedimentos ?? []).map((p) => p.nome ?? ""), appointment.observacoes ?? ""];
+  return texts.some((text) => {
+    const t = normalize(text);
+    return t.includes("transplante") || t.includes("capilar");
   });
+}
+
+function countProcedures(appointments: ClinicaNasNuvensAppointment[]): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const appointment of appointments) {
+    const names = (appointment.procedimentos ?? []).map((p) => p.nome).filter(Boolean);
+    for (const name of names.length > 0 ? names : ["(sem procedimento)"]) {
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
 }
 
 /** Last day of `month` (YYYY-MM) as YYYY-MM-DD. */
@@ -51,12 +70,13 @@ function lastDayOfMonth(month: string): string {
 export async function getHairTransplantSurgeries(month: string): Promise<HairTransplantSurgeriesResult> {
   const cnnStatus = await getIntegrationStatus("CLINICA_NAS_NUVENS");
   if (!cnnStatus.enabled || !cnnStatus.token) {
-    return { status: "not_connected", rows: [] };
+    return { status: "not_connected", rows: [], appointmentCount: 0, procedureCounts: [] };
   }
 
   try {
     const client = new ClinicaNasNuvensClient(cnnStatus.token);
-    const surgeries = (await client.listAppointments(`${month}-01`, lastDayOfMonth(month)))
+    const appointments = await client.listAppointments(`${month}-01`, lastDayOfMonth(month));
+    const surgeries = appointments
       .filter((a) => !CANCELLED_STATUSES.includes(a.status) && isHairTransplant(a))
       .sort((a, b) => `${a.data} ${a.horaInicio}`.localeCompare(`${b.data} ${b.horaInicio}`));
 
@@ -75,7 +95,7 @@ export async function getHairTransplantSurgeries(month: string): Promise<HairTra
         return { codigo: appointment.id, data: appointment.data, horaInicio: appointment.horaInicio, paciente };
       })
     );
-    return { status: "ok", rows };
+    return { status: "ok", rows, appointmentCount: appointments.length, procedureCounts: countProcedures(appointments) };
   } catch (err) {
     const errorMessage =
       err instanceof ClinicaNasNuvensApiError
@@ -83,6 +103,6 @@ export async function getHairTransplantSurgeries(month: string): Promise<HairTra
         : err instanceof Error
           ? err.message
           : String(err);
-    return { status: "error", rows: [], errorMessage };
+    return { status: "error", rows: [], appointmentCount: 0, procedureCounts: [], errorMessage };
   }
 }
