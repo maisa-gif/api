@@ -99,6 +99,13 @@ export default async function CirurgiasPage({
                 Baixar planilha
               </a>
             </div>
+            {!result.matchedByTipoAtendimento && (
+              <p className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                O Clínica nas Nuvens não enviou o tipo de atendimento dos agendamentos, então a lista foi montada pelo
+                procedimento/observação e pode incluir consultas e retornos. Abra um dia (clique na data) e confira os
+                campos enviados no fim da página.
+              </p>
+            )}
             {result.rows.length === 0 && (
               <div className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-950 dark:text-amber-300">
                 <p>
@@ -118,7 +125,7 @@ export default async function CirurgiasPage({
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-zinc-200 dark:border-zinc-800">
-                    {["Data", "Hora", "Paciente", "Procedimento / observação", "Status"].map((header) => (
+                    {["Data", "Hora", "Paciente", "Tipo de atendimento", "Procedimento / observação", "Status"].map((header) => (
                       <th key={header} className="py-2 pr-4 font-medium text-zinc-500 dark:text-zinc-400">
                         {header}
                       </th>
@@ -135,6 +142,7 @@ export default async function CirurgiasPage({
                       </td>
                       <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">{row.horaInicio.slice(0, 5)}</td>
                       <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">{row.paciente ?? ""}</td>
+                      <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">{row.tipoAtendimento ?? ""}</td>
                       <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">
                         {[row.procedimentos, row.observacoes].filter(Boolean).join(" — ")}
                       </td>
@@ -195,7 +203,7 @@ async function DayView({ date, cronSecret }: { date: string; cronSecret: string 
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-zinc-200 dark:border-zinc-800">
-                    {["Código", "Hora", "Paciente", "Profissional", "Procedimento", "Observação", "Status"].map((header) => (
+                    {["Código", "Hora", "Paciente", "Profissional", "Tipo de atendimento", "Procedimento", "Observação", "Status"].map((header) => (
                       <th key={header} className="py-2 pr-4 font-medium text-zinc-500 dark:text-zinc-400">
                         {header}
                       </th>
@@ -214,6 +222,7 @@ async function DayView({ date, cronSecret }: { date: string; cronSecret: string 
                       <td className="py-2 pr-4">{row.horaInicio.slice(0, 5)}</td>
                       <td className="py-2 pr-4">{row.paciente ?? ""}</td>
                       <td className="py-2 pr-4">{row.profissional}</td>
+                      <td className="py-2 pr-4">{row.tipoAtendimento ?? ""}</td>
                       <td className="py-2 pr-4">{row.procedimentos}</td>
                       <td className="py-2 pr-4">{row.observacoes ?? ""}</td>
                       <td className="py-2 pr-4">{row.status}</td>
@@ -222,6 +231,12 @@ async function DayView({ date, cronSecret }: { date: string; cronSecret: string 
                 </tbody>
               </table>
             </div>
+            {result.rawSample && (
+              <details className="mt-6 text-xs text-zinc-500 dark:text-zinc-400">
+                <summary className="cursor-pointer">Campos enviados pelo Clínica nas Nuvens (1º agendamento)</summary>
+                <pre className="mt-2 overflow-x-auto rounded-lg bg-zinc-100 p-3 dark:bg-zinc-950">{result.rawSample}</pre>
+              </details>
+            )}
           </>
         )}
       </div>

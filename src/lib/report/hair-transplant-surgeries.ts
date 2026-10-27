@@ -17,6 +17,7 @@ export interface HairTransplantSurgery {
   horaInicio: string;
   paciente: string | null;
   procedimentos: string;
+  tipoAtendimento: string | null;
   observacoes: string | null;
   status: string;
 }
@@ -28,6 +29,8 @@ export interface HairTransplantSurgeriesResult {
   appointmentCount: number;
   /** Procedure name → appointments using it, to spot how surgeries are named when nothing matches. */
   procedureCounts: [string, number][];
+  /** False when CNN sent no "tipo de atendimento" text, so the match fell back to procedures/notes. */
+  matchedByTipoAtendimento: boolean;
   errorMessage?: string;
 }
 
@@ -37,10 +40,37 @@ const normalize = (s: string) =>
   s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 /**
- * Matches "Cirurgia Transplante Capilar" and variants of it, whether the
- * clinic recorded it as a procedure or only in the appointment's notes.
+ * The appointment's "tipo de atendimento" (e.g. "Cirurgia Transplante
+ * Capilar"), which the clinic uses to mark surgeries. Not in the typed
+ * client shape since its exact field name in /agenda/lista is unconfirmed,
+ * so any top-level key like tipoAtendimento is read, as text or as an
+ * object with a name.
+ */
+function tipoAtendimento(appointment: ClinicaNasNuvensAppointment): string | null {
+  for (const [key, value] of Object.entries(appointment as unknown as Record<string, unknown>)) {
+    const k = key.toLowerCase();
+    if (!k.includes("tipo") || !k.includes("atendimento")) continue;
+    if (typeof value === "string" && value.trim()) return value;
+    if (value && typeof value === "object") {
+      const named = value as Record<string, unknown>;
+      const text = named.nome ?? named.descricao ?? named.tipo;
+      if (typeof text === "string" && text.trim()) return text;
+    }
+  }
+  return null;
+}
+
+/**
+ * Matches tipo de atendimento "Cirurgia Transplante Capilar". When CNN
+ * sends no tipo de atendimento, falls back to procedure names and notes,
+ * which also catch consultations and follow-ups mentioning a transplant.
  */
 function isHairTransplant(appointment: ClinicaNasNuvensAppointment): boolean {
+  const tipo = tipoAtendimento(appointment);
+  if (tipo !== null) {
+    const t = normalize(tipo);
+    return t.includes("transplante") && t.includes("capil");
+  }
   const texts = [...(appointment.procedimentos ?? []).map((p) => p.nome ?? ""), appointment.observacoes ?? ""];
   return texts.some((text) => {
     const t = normalize(text);
@@ -80,6 +110,7 @@ function describe(appointment: ClinicaNasNuvensAppointment): Omit<HairTransplant
     data: appointment.data,
     horaInicio: appointment.horaInicio,
     procedimentos: (appointment.procedimentos ?? []).map((p) => p.nome).join(", "),
+    tipoAtendimento: tipoAtendimento(appointment),
     observacoes: appointment.observacoes,
     status: appointment.status,
   };
@@ -99,7 +130,7 @@ function lastDayOfMonth(month: string): string {
 export async function getHairTransplantSurgeries(month: string): Promise<HairTransplantSurgeriesResult> {
   const cnnStatus = await getIntegrationStatus("CLINICA_NAS_NUVENS");
   if (!cnnStatus.enabled || !cnnStatus.token) {
-    return { status: "not_connected", rows: [], appointmentCount: 0, procedureCounts: [] };
+    return { status: "not_connected", rows: [], appointmentCount: 0, procedureCounts: [], matchedByTipoAtendimento: false };
   }
 
   try {
@@ -120,7 +151,13 @@ export async function getHairTransplantSurgeries(month: string): Promise<HairTra
         return { ...describe(appointment), paciente };
       })
     );
-    return { status: "ok", rows, appointmentCount: appointments.length, procedureCounts: countProcedures(appointments) };
+    return {
+      status: "ok",
+      rows,
+      appointmentCount: appointments.length,
+      procedureCounts: countProcedures(appointments),
+      matchedByTipoAtendimento: appointments.some((a) => tipoAtendimento(a) !== null),
+    };
   } catch (err) {
     const errorMessage =
       err instanceof ClinicaNasNuvensApiError
@@ -128,7 +165,14 @@ export async function getHairTransplantSurgeries(month: string): Promise<HairTra
         : err instanceof Error
           ? err.message
           : String(err);
-    return { status: "error", rows: [], appointmentCount: 0, procedureCounts: [], errorMessage };
+    return {
+      status: "error",
+      rows: [],
+      appointmentCount: 0,
+      procedureCounts: [],
+      matchedByTipoAtendimento: false,
+      errorMessage,
+    };
   }
 }
 
@@ -140,6 +184,8 @@ export interface DayAppointment extends HairTransplantSurgery {
 export interface DayAppointmentsResult {
   status: "ok" | "not_connected" | "error";
   rows: DayAppointment[];
+  /** One appointment exactly as /agenda/lista returns it (contact info removed), to see its field names. */
+  rawSample?: string;
   errorMessage?: string;
 }
 
@@ -177,7 +223,13 @@ export async function getDayAppointments(date: string): Promise<DayAppointmentsR
         };
       })
     );
-    return { status: "ok", rows };
+    const sample = appointments[0] && {
+      ...appointments[0],
+      telefoneCelularPaciente: undefined,
+      emailPaciente: undefined,
+      observacoes: undefined,
+    };
+    return { status: "ok", rows, rawSample: sample ? JSON.stringify(sample, null, 2) : undefined };
   } catch (err) {
     const errorMessage =
       err instanceof ClinicaNasNuvensApiError
